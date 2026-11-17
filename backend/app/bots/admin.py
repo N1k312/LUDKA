@@ -1,7 +1,9 @@
-"""Админ-панель в боте клуба: проверка и погашение промокодов.
+"""Админ-панель в боте клуба: промокоды и сотрудники.
 
-Видна только сотрудникам этого клуба (club_staff). Админ одного клуба
-в другом клубе — обычный гость: фильтр проверяет роль именно в текущем клубе.
+Видна владельцам платформы (во всех ботах) и сотрудникам этого клуба.
+Роль одного клуба в другом не действует: фильтр проверяет роль в текущем клубе.
+Кнопки зависят от роли, а права заново проверяются на сервере при каждом действии
+(см. app/services/staff.py).
 
 Промокод можно ввести текстом или отсканировать: кнопка «📷 Сканировать QR»
 открывает Mini App в режиме сканера, он отправляет код боту через web_app_data.
@@ -14,35 +16,55 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
+    KeyboardButtonRequestUsers,
     Message,
     ReplyKeyboardMarkup,
     TelegramObject,
     WebAppInfo,
 )
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bots.notify import local_datetime
+from app.bots.setup import reset_commands, set_staff_commands
 from app.config import get_settings
-from app.models import Club, ClubStaff, RedemptionResult
+from app.models import Club, ClubStaff, RedemptionResult, StaffRole
 from app.services.redemption import FAILED_WINDOW, Outcome, check_code, normalize_code, redeem_code
+from app.services.staff import (
+    ROLE_TITLES,
+    Person,
+    Role,
+    StaffError,
+    add_admin,
+    assign_superadmin,
+    can_assign_superadmin,
+    can_manage_admins,
+    list_staff,
+    remove_staff,
+    role_in_club,
+)
 
 REDEEM_PREFIX = "redeem:"
 SCAN_BUTTON = "📷 Сканировать QR"
 ENTER_BUTTON = "⌨️ Ввести код"
+STAFF_BUTTON = "👥 Сотрудники"
+ADD_ADMIN_BUTTON = "➕ Добавить админа"
+SUPERADMIN_BUTTON = "👑 Назначить суперадмина"
+REMOVE_PREFIX = "staff:rm:"
+
+# request_id для встроенного выбора пользователя Telegram.
+PICK_ADMIN = 1
+PICK_SUPERADMIN = 2
 
 
 class IsStaff(BaseFilter):
-    """Пропускает только сотрудников текущего клуба и передаёт запись в обработчик как staff."""
+    """Пропускает владельцев платформы и сотрудников текущего клуба; передаёт role в обработчик."""
 
     async def __call__(self, event: TelegramObject, club: Club, db: AsyncSession) -> bool | dict:
         user = getattr(event, "from_user", None)
         if user is None:
             return False
-        staff = await db.scalar(
-            select(ClubStaff).where(ClubStaff.club_id == club.id, ClubStaff.telegram_id == user.id)
-        )
-        return {"staff": staff} if staff else False
+        role = await role_in_club(db, club, user.id)
+        return {"role": role} if role else False
 
 
 router = Router(name="admin")
@@ -50,16 +72,25 @@ router.message.filter(F.chat.type == "private", IsStaff())
 router.callback_query.filter(IsStaff())
 
 
-def admin_keyboard(bot_id: int) -> ReplyKeyboardMarkup:
-    scan_url = f"{get_settings().webapp_url_for(bot_id)}&scan=1"
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=SCAN_BUTTON, web_app=WebAppInfo(url=scan_url))],
-            [KeyboardButton(text=ENTER_BUTTON)],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
+def _pick_user(text: str, request_id: int) -> KeyboardButton:
+    return KeyboardButton(
+        text=text,
+        request_users=KeyboardButtonRequestUsers(
+            request_id=request_id, user_is_bot=False, max_quantity=1,
+            request_name=True, request_username=True,
+        ),
     )
+
+
+def admin_keyboard(bot_id: int, role: Role) -> ReplyKeyboardMarkup:
+    scan_url = f"{get_settings().webapp_url_for(bot_id)}&scan=1"
+    rows = [[KeyboardButton(text=SCAN_BUTTON, web_app=WebAppInfo(url=scan_url)),
+             KeyboardButton(text=ENTER_BUTTON)]]
+    if can_manage_admins(role):
+        rows.append([_pick_user(ADD_ADMIN_BUTTON, PICK_ADMIN), KeyboardButton(text=STAFF_BUTTON)])
+    if can_assign_superadmin(role):
+        rows.append([_pick_user(SUPERADMIN_BUTTON, PICK_SUPERADMIN)])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)
 
 
 def mask_phone(phone: str | None) -> str:
@@ -117,12 +148,18 @@ async def notify_guest_redeemed(bot: Bot, outcome: Outcome, club: Club) -> None:
 
 
 @router.message(Command("admin"))
-async def admin_menu(message: Message, club: Club) -> None:
-    await message.answer(
-        f"🛠 Админ-панель клуба {html.bold(html.quote(club.name))}\n\n"
+async def admin_menu(message: Message, club: Club, role: Role) -> None:
+    lines = [
+        f"🛠 Админ-панель клуба {html.bold(html.quote(club.name))}",
+        f"Ваша роль: {ROLE_TITLES[role]}",
+        "",
         "Отсканируйте QR гостя или отправьте промокод сообщением (например, GG-7K3M9Q).",
-        reply_markup=admin_keyboard(message.bot.id),
-    )
+    ]
+    if can_manage_admins(role):
+        lines.append("«➕ Добавить админа» — выбрать человека из контактов, «👥 Сотрудники» — список и удаление.")
+    if can_assign_superadmin(role):
+        lines.append("«👑 Назначить суперадмина» — один на клуб, прежний станет админом.")
+    await message.answer("\n".join(lines), reply_markup=admin_keyboard(message.bot.id, role))
 
 
 @router.message(F.text == ENTER_BUTTON)
@@ -157,3 +194,88 @@ async def redeem(callback: CallbackQuery, club: Club, db: AsyncSession) -> None:
         await notify_guest_redeemed(callback.bot, outcome, club)
     else:
         await callback.answer("Не удалось погасить", show_alert=False)
+
+
+# --- Сотрудники -------------------------------------------------------------------------
+
+
+def staff_text_and_keyboard(club: Club, staff: list[ClubStaff], role: Role, actor_id: int):
+    if not staff:
+        return f"В клубе {html.quote(club.name)} пока нет сотрудников.", None
+    lines, buttons = [f"👥 Сотрудники клуба {html.bold(html.quote(club.name))}", ""], []
+    for s in staff:
+        person = Person(s.telegram_id, s.first_name, s.username)
+        is_owner = s.role == StaffRole.OWNER
+        lines.append(f"{'👑' if is_owner else '🔑'} {html.quote(person.title())} — "
+                     f"{'суперадмин' if is_owner else 'админ'}")
+        removable = (can_assign_superadmin(role) if is_owner else can_manage_admins(role)) and (
+            s.telegram_id != actor_id or role == Role.PLATFORM_OWNER
+        )
+        if removable:
+            buttons.append([InlineKeyboardButton(
+                text=f"Убрать: {person.first_name or s.telegram_id}",
+                callback_data=f"{REMOVE_PREFIX}{s.telegram_id}",
+            )])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+    return "\n".join(lines), keyboard
+
+
+@router.message(F.text == STAFF_BUTTON)
+async def show_staff(message: Message, club: Club, db: AsyncSession, role: Role) -> None:
+    if not can_manage_admins(role):
+        await message.answer("Список сотрудников доступен суперадмину клуба.")
+        return
+    text, keyboard = staff_text_and_keyboard(club, await list_staff(db, club), role, message.from_user.id)
+    await message.answer(text, reply_markup=keyboard)
+
+
+async def _greet_new_staff(bot: Bot, club: Club, telegram_id: int, title: str) -> None:
+    await set_staff_commands(bot, telegram_id)
+    try:
+        await bot.send_message(
+            telegram_id,
+            f"Вас назначили: {title} клуба {html.bold(html.quote(club.name))}.\n"
+            "Откройте /admin, чтобы проверять и гасить промокоды.",
+        )
+    except Exception:  # человек ещё не писал боту — увидит /admin, когда напишет
+        pass
+
+
+@router.message(F.users_shared)
+async def user_picked(message: Message, club: Club, db: AsyncSession, role: Role) -> None:
+    shared = message.users_shared
+    if not shared.users:
+        return
+    user = shared.users[0]
+    person = Person(user.user_id, user.first_name, user.username)
+    try:
+        if shared.request_id == PICK_SUPERADMIN:
+            _, previous = await assign_superadmin(db, club, role, person)
+            text = f"👑 {html.quote(person.title())} — суперадмин клуба {html.quote(club.name)}."
+            if previous is not None:
+                text += f"\nПрежний суперадмин ({html.quote(Person(previous.telegram_id, previous.first_name, previous.username).title())}) теперь админ."
+            await message.answer(text)
+            await _greet_new_staff(message.bot, club, person.telegram_id, "суперадмин")
+        elif shared.request_id == PICK_ADMIN:
+            await add_admin(db, club, role, person)
+            await message.answer(f"🔑 {html.quote(person.title())} — админ клуба {html.quote(club.name)}.")
+            await _greet_new_staff(message.bot, club, person.telegram_id, "админ")
+    except StaffError as e:
+        await message.answer(f"⛔ {e}")
+
+
+@router.callback_query(F.data.startswith(REMOVE_PREFIX))
+async def remove(callback: CallbackQuery, club: Club, db: AsyncSession, role: Role) -> None:
+    try:
+        telegram_id = int(callback.data.removeprefix(REMOVE_PREFIX))
+        removed = await remove_staff(db, club, role, callback.from_user.id, telegram_id)
+    except (ValueError, StaffError) as e:
+        await callback.answer(str(e) if isinstance(e, StaffError) else "Некорректный запрос", show_alert=True)
+        return
+    await reset_commands(callback.bot, telegram_id)
+    await callback.answer("Убран")
+    text, keyboard = staff_text_and_keyboard(club, await list_staff(db, club), role, callback.from_user.id)
+    await callback.message.edit_text(
+        f"{text}\n\n✅ Убран: {html.quote(Person(removed.telegram_id, removed.first_name, removed.username).title())}",
+        reply_markup=keyboard,
+    )

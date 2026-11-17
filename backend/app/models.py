@@ -24,6 +24,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -137,13 +138,30 @@ class ClubBot(Base):
 
 
 class ClubStaff(Base):
+    """Сотрудники клуба. owner — суперадмин клуба (один на клуб), admin — админ.
+
+    Владельцы платформы сюда не записываются: их права задаются в .env.
+    """
+
     __tablename__ = "club_staff"
-    __table_args__ = (UniqueConstraint("club_id", "telegram_id"),)
+    __table_args__ = (
+        UniqueConstraint("club_id", "telegram_id"),
+        # Один суперадмин на клуб — гарантия на уровне базы.
+        Index(
+            "uq_club_staff_one_owner",
+            "club_id",
+            unique=True,
+            postgresql_where=text("role = 'owner'"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     club_id: Mapped[int] = mapped_column(BigInteger, club_fk())
     telegram_id: Mapped[int] = mapped_column(BigInteger)
     role: Mapped[StaffRole] = mapped_column(str_enum(StaffRole, "staff_role"))
+    # Имя и username — для списка сотрудников (из выбора пользователя в Telegram).
+    first_name: Mapped[str | None] = mapped_column(String(128))
+    username: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = created_at_column()
 
 

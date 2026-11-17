@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     # метрик (/quicktunnel), и при смене адреса боты перенастраиваются сами.
     tunnel_metrics_url: str | None = None
 
+    # Владельцы платформы: Telegram id через запятую. Во всех ботах клубов
+    # у них максимальные права: назначают суперадминов и любых сотрудников.
+    platform_owner_ids: str = ""
+
+    @property
+    def owner_ids(self) -> set[int]:
+        return {int(x) for x in self.platform_owner_ids.replace(" ", "").split(",") if x}
+
     # Сколько секунд initData из Mini App считается свежим.
     init_data_max_age_seconds: int = 24 * 3600
 

@@ -45,6 +45,14 @@ def web_app_data_update(data: str, user_id: int) -> dict:
     return message_update(user_id=user_id, web_app_data={"data": data, "button_text": "📷 Сканировать QR"})
 
 
+def users_shared_update(request_id: int, picked_id: int, user_id: int, first_name: str = "Ваня",
+                        username: str | None = "vanya") -> dict:
+    picked = {"user_id": picked_id, "first_name": first_name}
+    if username:
+        picked["username"] = username
+    return message_update(user_id=user_id, users_shared={"request_id": request_id, "users": [picked]})
+
+
 def callback_update(data: str, user_id: int = GUEST_ID) -> dict:
     return {
         "update_id": next(_ids),

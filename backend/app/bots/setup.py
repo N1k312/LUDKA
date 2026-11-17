@@ -51,6 +51,9 @@ async def configure_bot(bot: Bot, club_bot: ClubBot, club: Club) -> None:
         )
     )
     await bot.set_my_commands(GUEST_COMMANDS)
+    # Владельцам платформы /admin виден в меню каждого бота (если они уже писали боту).
+    for owner_id in settings.owner_ids:
+        await set_staff_commands(bot, owner_id)
     await bot.set_my_description(
         description=(
             f"Бот клуба «{club.name}».\n\n"
@@ -110,3 +113,11 @@ async def set_staff_commands(bot: Bot, telegram_id: int) -> bool:
         return True
     except Exception:
         return False
+
+
+async def reset_commands(bot: Bot, telegram_id: int) -> None:
+    """Убирает /admin из меню у бывшего сотрудника (возвращает общее меню гостя)."""
+    try:
+        await bot.delete_my_commands(scope=BotCommandScopeChat(chat_id=telegram_id))
+    except Exception:
+        pass
