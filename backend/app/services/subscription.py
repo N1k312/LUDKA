@@ -1,22 +1,103 @@
-"""Доступность акции по подписке клуба.
+"""Подписка клуба.
 
-trial (до trial_ends_at) → active (до current_period_end) → past_due (отсрочка 3 дня) → canceled.
-Автоматические переходы статусов по датам — шаг 8; здесь решение принимается по датам,
-поэтому оно верно даже если статус ещё не обновлён.
+trial (14 дней) → active (оплаченный период) → past_due (отсрочка 3 дня) → canceled.
+
+Статус выводится из дат: «оплачено до» — это current_period_end, а если клуб
+ещё ни разу не платил — trial_ends_at. Поэтому решение «можно ли играть»
+верно в любой момент, даже если фоновое обновление статусов ещё не прошло.
+Отмена вручную (canceled) действует, пока суперадмин снова не продлит подписку.
+
+Без подписки колесо не крутится, но данные сохраняются, а выданные промокоды
+по-прежнему можно погасить.
 """
 
-from datetime import datetime, timedelta
+import logging
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
-from app.models import Subscription, SubscriptionStatus
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models import Payment, Subscription, SubscriptionStatus
+
+logger = logging.getLogger(__name__)
+
+TRIAL_PERIOD = timedelta(days=14)
 GRACE_PERIOD = timedelta(days=3)
+PLAYABLE = {SubscriptionStatus.TRIAL, SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE}
+
+
+def paid_until(sub: Subscription) -> datetime | None:
+    return sub.current_period_end or sub.trial_ends_at
+
+
+def compute_status(sub: Subscription, now: datetime) -> SubscriptionStatus:
+    if sub.status == SubscriptionStatus.CANCELED:
+        return SubscriptionStatus.CANCELED
+    until = paid_until(sub)
+    if until is None:
+        return SubscriptionStatus.CANCELED
+    if now < until:
+        return SubscriptionStatus.ACTIVE if sub.current_period_end else SubscriptionStatus.TRIAL
+    if now < until + GRACE_PERIOD:
+        return SubscriptionStatus.PAST_DUE
+    return SubscriptionStatus.CANCELED
 
 
 def allows_play(sub: Subscription | None, now: datetime) -> bool:
-    if sub is None:
-        return False
-    if sub.status == SubscriptionStatus.TRIAL:
-        return sub.trial_ends_at is not None and now < sub.trial_ends_at
-    if sub.status in (SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE):
-        return sub.current_period_end is not None and now < sub.current_period_end + GRACE_PERIOD
-    return False
+    return sub is not None and compute_status(sub, now) in PLAYABLE
+
+
+def new_trial(club_id: int, now: datetime | None = None) -> Subscription:
+    now = now or datetime.now(UTC)
+    return Subscription(
+        club_id=club_id, status=SubscriptionStatus.TRIAL, trial_ends_at=now + TRIAL_PERIOD
+    )
+
+
+async def refresh_statuses(db: AsyncSession, now: datetime | None = None) -> int:
+    """Переводит статусы по датам (trial→past_due→canceled и т. д.). Возвращает число изменений."""
+    now = now or datetime.now(UTC)
+    changed = 0
+    for sub in await db.scalars(
+        select(Subscription).where(Subscription.status != SubscriptionStatus.CANCELED)
+    ):
+        status = compute_status(sub, now)
+        if status != sub.status:
+            logger.info("Подписка клуба %s: %s → %s", sub.club_id, sub.status, status)
+            sub.status = status
+            changed += 1
+    await db.flush()
+    return changed
+
+
+async def extend(
+    db: AsyncSession,
+    sub: Subscription,
+    days: int,
+    amount: Decimal | None = None,
+    comment: str | None = None,
+    now: datetime | None = None,
+) -> Payment | None:
+    """Продление после оплаты счётом или переводом.
+
+    Новый период начинается с конца текущего, если он ещё не истёк (оплата заранее
+    не теряет дни), иначе — с текущего момента.
+    """
+    now = now or datetime.now(UTC)
+    until = paid_until(sub)
+    start = until if until and until > now and sub.status != SubscriptionStatus.CANCELED else now
+    sub.current_period_end = start + timedelta(days=days)
+    sub.status = SubscriptionStatus.ACTIVE
+
+    payment = None
+    if amount is not None:
+        payment = Payment(club_id=sub.club_id, amount=amount, paid_at=now, comment=comment)
+        db.add(payment)
+    await db.flush()
+    return payment
+
+
+async def cancel(db: AsyncSession, sub: Subscription) -> None:
+    sub.status = SubscriptionStatus.CANCELED
+    await db.flush()

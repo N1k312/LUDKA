@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bots.handlers import CONSENT_CALLBACK
 from app.bots.setup import connect_bot
-from app.models import Club, ClubBot, Guest
+from app.models import Club, Guest
 from app.services.guests import normalize_phone
 from app.services.qr import save_qr, start_link
 from tests.botkit import GUEST_ID, BotClient, callback_update, contact_update, message_update

@@ -226,7 +226,7 @@ async def test_empty_sector_gives_no_code(session, client, telegram):
 
 
 async def test_spin_unavailable_without_subscription(session, client, telegram):
-    club = await make_club(session, "Клуб А", TOKEN_A, [("1 час", 1, False)], trial_days=-1)
+    club = await make_club(session, "Клуб А", TOKEN_A, [("1 час", 1, False)], trial_days=-4)
     await make_guest(session, club)
 
     response = await client.post("/api/spin", headers=headers(TOKEN_A, BOT_A))

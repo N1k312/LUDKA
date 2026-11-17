@@ -5,22 +5,20 @@
 """
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.subscription import new_trial
 from app.models import (
     Club,
     GameConfig,
     GameType,
     PrizeOption,
-    Subscription,
-    SubscriptionStatus,
 )
 
 PILOT_CLUB_NAME = "Тестовый клуб"
-TRIAL_DAYS = 14
 WHEEL_COOLDOWN = timedelta(days=7)
 
 PILOT_RULES = (
@@ -51,13 +49,7 @@ async def seed_pilot_club(session: AsyncSession) -> Club:
     session.add(club)
     await session.flush()
 
-    session.add(
-        Subscription(
-            club_id=club.id,
-            status=SubscriptionStatus.TRIAL,
-            trial_ends_at=datetime.now(UTC) + timedelta(days=TRIAL_DAYS),
-        )
-    )
+    session.add(new_trial(club.id))
     session.add(
         GameConfig(
             club_id=club.id,

@@ -1,5 +1,6 @@
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse
@@ -7,16 +8,38 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bots.registry import registry
-from app.db import engine, get_session
+from app.db import SessionLocal, engine, get_session
+from app.logging_setup import install_redaction, setup_logging
 from app.routes import miniapp, telegram
+from app.services.subscription import refresh_statuses
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+setup_logging()
 logger = logging.getLogger(__name__)
+
+
+SUBSCRIPTION_CHECK_SECONDS = 600
+
+
+async def watch_subscriptions() -> None:
+    """Раз в 10 минут переводит статусы подписок по датам (trial → past_due → canceled)."""
+    while True:
+        try:
+            async with SessionLocal() as db:
+                await refresh_statuses(db)
+                await db.commit()
+        except Exception:
+            logger.exception("Не удалось обновить статусы подписок")
+        await asyncio.sleep(SUBSCRIPTION_CHECK_SECONDS)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    install_redaction()  # на случай, если uvicorn пересоздал обработчики
+    watcher = asyncio.create_task(watch_subscriptions())
     yield
+    watcher.cancel()
+    with suppress(asyncio.CancelledError):
+        await watcher
     await registry.close()
     await engine.dispose()
 

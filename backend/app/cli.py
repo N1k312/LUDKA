@@ -12,13 +12,20 @@
   make-qr --club-id N [--out файл.png|.svg] [--startapp]   QR для печати у кассы
   set-cooldown --club-id N --seconds N   лимит спинов (604800 = 7 дней)
   refresh-webhooks                   перенастроить всех ботов после смены PUBLIC_BASE_URL
+
+Подписка (продлевается вручную после оплаты счётом или переводом):
+  extend-subscription --club-id N --days 30 [--amount 20000] [--comment "счёт №1"]
+  cancel-subscription --club-id N
+  list-payments --club-id N
 """
 
 import argparse
 import asyncio
 import getpass
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from aiogram.exceptions import TelegramAPIError, TelegramUnauthorizedError
@@ -30,6 +37,8 @@ from app.bots.registry import registry
 from app.bots.setup import BotSetupError, connect_bot, refresh_bot, set_staff_commands
 from app.config import get_settings
 from app.db import SessionLocal, engine
+from app.logging_setup import setup_logging
+from app.services import subscription
 from app.services.qr import save_qr, start_link
 from app.models import (
     BotStatus,
@@ -40,11 +49,10 @@ from app.models import (
     GameType,
     PrizeOption,
     StaffRole,
+    Payment,
     Subscription,
-    SubscriptionStatus,
 )
 
-TRIAL_DAYS = 14
 WHEEL_COOLDOWN_SECONDS = 7 * 24 * 3600
 
 
@@ -59,7 +67,28 @@ async def get_club(db: AsyncSession, club_id: int) -> Club:
     return club
 
 
+def local(value: datetime, club: Club) -> str:
+    return value.astimezone(ZoneInfo(club.timezone)).strftime("%d.%m.%Y %H:%M")
+
+
+def describe_subscription(sub: Subscription | None, club: Club) -> str:
+    if sub is None:
+        return "нет"
+    until = subscription.paid_until(sub)
+    return f"{sub.status}, оплачено до {local(until, club)}" if until else str(sub.status)
+
+
+async def get_subscription(db: AsyncSession, club: Club) -> Subscription:
+    sub = await db.get(Subscription, club.id)
+    if sub is None:
+        sub = subscription.new_trial(club.id)
+        db.add(sub)
+        await db.flush()
+    return sub
+
+
 async def cmd_list_clubs(db: AsyncSession, args: argparse.Namespace) -> None:
+    await subscription.refresh_statuses(db)
     rows = await db.execute(
         select(Club, ClubBot, Subscription)
         .outerjoin(ClubBot, ClubBot.club_id == Club.id)
@@ -68,27 +97,20 @@ async def cmd_list_clubs(db: AsyncSession, args: argparse.Namespace) -> None:
     )
     for club, bot, sub in rows:
         bot_text = f"@{bot.username} ({bot.status})" if bot else "бот не подключён"
-        sub_text = sub.status if sub else "нет подписки"
-        print(f"{club.id:>4}  {club.name}  |  {bot_text}  |  подписка: {sub_text}")
+        print(f"{club.id:>4}  {club.name}  |  {bot_text}  |  подписка: {describe_subscription(sub, club)}")
 
 
 async def cmd_create_club(db: AsyncSession, args: argparse.Namespace) -> None:
     club = Club(name=args.name, timezone=args.timezone)
     db.add(club)
     await db.flush()
-    db.add(
-        Subscription(
-            club_id=club.id,
-            status=SubscriptionStatus.TRIAL,
-            trial_ends_at=datetime.now(UTC) + timedelta(days=TRIAL_DAYS),
-        )
-    )
+    db.add(subscription.new_trial(club.id))
     db.add(
         GameConfig(
             club_id=club.id, game_type=GameType.WHEEL, cooldown_seconds=WHEEL_COOLDOWN_SECONDS
         )
     )
-    print(f"Создан клуб id={club.id} «{club.name}», пробный период {TRIAL_DAYS} дней")
+    print(f"Создан клуб id={club.id} «{club.name}», пробный период 14 дней")
 
 
 async def cmd_add_prize(db: AsyncSession, args: argparse.Namespace) -> None:
@@ -196,6 +218,42 @@ async def cmd_refresh_webhooks(db: AsyncSession, args: argparse.Namespace) -> No
         print("Нет подключённых ботов")
 
 
+async def cmd_extend_subscription(db: AsyncSession, args: argparse.Namespace) -> None:
+    club = await get_club(db, args.club_id)
+    if args.days <= 0:
+        raise CliError("--days должно быть больше нуля")
+    amount = None
+    if args.amount is not None:
+        try:
+            amount = Decimal(args.amount.replace(",", ".").replace(" ", ""))
+        except InvalidOperation:
+            raise CliError("--amount: укажите сумму числом, например 20000") from None
+        if amount <= 0:
+            raise CliError("--amount должна быть больше нуля")
+    sub = await get_subscription(db, club)
+    payment = await subscription.extend(db, sub, args.days, amount, args.comment)
+    print(f"Подписка клуба «{club.name}»: {describe_subscription(sub, club)}")
+    if payment:
+        print(f"Записана оплата: {payment.amount} {payment.currency}")
+
+
+async def cmd_cancel_subscription(db: AsyncSession, args: argparse.Namespace) -> None:
+    club = await get_club(db, args.club_id)
+    await subscription.cancel(db, await get_subscription(db, club))
+    print(f"Подписка клуба «{club.name}» отменена: колесо выключено, выданные промокоды можно погасить")
+
+
+async def cmd_list_payments(db: AsyncSession, args: argparse.Namespace) -> None:
+    club = await get_club(db, args.club_id)
+    payments = (
+        await db.scalars(select(Payment).where(Payment.club_id == club.id).order_by(Payment.paid_at))
+    ).all()
+    for p in payments:
+        print(f"{local(p.paid_at, club)}  {p.amount:>12} {p.currency}  {p.comment or ''}")
+    if not payments:
+        print("Оплат нет")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="app.cli", description="Команды суперадмина")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -245,6 +303,21 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "refresh-webhooks", help="перенастроить ботов после смены PUBLIC_BASE_URL"
     ).set_defaults(func=cmd_refresh_webhooks)
+    p = sub.add_parser("extend-subscription", help="продлить подписку после оплаты")
+    p.add_argument("--club-id", type=int, required=True)
+    p.add_argument("--days", type=int, required=True)
+    p.add_argument("--amount", help="сумма оплаты (записывается в payments)")
+    p.add_argument("--comment", help="например, номер счёта")
+    p.set_defaults(func=cmd_extend_subscription)
+
+    p = sub.add_parser("cancel-subscription", help="отменить подписку клуба")
+    p.add_argument("--club-id", type=int, required=True)
+    p.set_defaults(func=cmd_cancel_subscription)
+
+    p = sub.add_parser("list-payments", help="оплаты клуба")
+    p.add_argument("--club-id", type=int, required=True)
+    p.set_defaults(func=cmd_list_payments)
+
     return parser
 
 
@@ -266,6 +339,7 @@ async def run(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
+    setup_logging()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
         sys.stderr.reconfigure(encoding="utf-8")
