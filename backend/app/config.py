@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     def base_url(self) -> str:
         return self.public_base_url.rstrip("/")
 
+    # Запуск на своём компьютере: адрес quick-туннеля cloudflared берётся из его
+    # метрик (/quicktunnel), и при смене адреса боты перенастраиваются сами.
+    tunnel_metrics_url: str | None = None
+
     # Сколько секунд initData из Mini App считается свежим.
     init_data_max_age_seconds: int = 24 * 3600
 

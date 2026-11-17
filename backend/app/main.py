@@ -11,7 +11,9 @@ from app.bots.registry import registry
 from app.db import SessionLocal, engine, get_session
 from app.logging_setup import install_redaction, setup_logging
 from app.routes import miniapp, telegram
+from app.config import get_settings
 from app.services.subscription import refresh_statuses
+from app.services.tunnel import watch_tunnel
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -35,11 +37,14 @@ async def watch_subscriptions() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     install_redaction()  # на случай, если uvicorn пересоздал обработчики
-    watcher = asyncio.create_task(watch_subscriptions())
+    tasks = [asyncio.create_task(watch_subscriptions())]
+    if get_settings().tunnel_metrics_url:
+        tasks.append(asyncio.create_task(watch_tunnel(SessionLocal)))
     yield
-    watcher.cancel()
-    with suppress(asyncio.CancelledError):
-        await watcher
+    for task in tasks:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
     await registry.close()
     await engine.dispose()
 

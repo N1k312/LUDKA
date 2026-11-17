@@ -1,0 +1,53 @@
+# Рабочий запуск платформы на своём компьютере (без VPS и домена).
+# Дополняет корневой docker-compose.yml (db + api). Запуск из корня репозитория:
+#
+#   docker compose -f docker-compose.yml -f deploy/compose.server.yml up -d --build
+#
+# Все сервисы с restart: unless-stopped — после перезагрузки компьютера они
+# поднимутся сами, как только запустится Docker Desktop.
+
+services:
+  api:
+    environment:
+      # API сам узнаёт адрес туннеля и перенастраивает ботов при его смене.
+      TUNNEL_METRICS_URL: http://tunnel:2000
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/web.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  tunnel:
+    image: cloudflare/cloudflared:2026.11.0
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --metrics 0.0.0.0:2000 --url http://web:80
+    depends_on:
+      - web
+
+  backup:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB}
+      KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      # Папку стоит держать в OneDrive / Google Drive / на другом диске —
+      # тогда копии базы переживут потерю этого компьютера.
+      - ${BACKUP_DIR:-./backups}:/backups
+    entrypoint: ["sh", "/backup.sh"]
+    configs:
+      - source: backup_script
+        target: /backup.sh
+    depends_on:
+      db:
+        condition: service_healthy
+
+configs:
+  backup_script:
+    file: ./deploy/backup.sh

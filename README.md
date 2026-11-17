@@ -1,6 +1,6 @@
 # Платформа мини-игр лояльности для компьютерных клубов
 
-Требования — [requirments.md](requirments.md), план работ — [plan.md](plan.md).
+Требования — [requirments.md](requirments.md), план работ — [plan.md](plan.md), подключение клуба — [deploy/connect-club.md](deploy/connect-club.md).
 
 ## Структура
 
@@ -8,7 +8,7 @@
 | --- | --- |
 | `backend/` | FastAPI, боты aiogram, работа с базой, тесты |
 | `miniapp/` | Mini App на React + Vite + TypeScript |
-| `deploy/` | Конфиги для сервера (появятся на шаге 9) |
+| `deploy/` | Рабочий запуск на своём компьютере: Caddy, туннель, бэкапы |
 
 ## Первый запуск
 
@@ -140,6 +140,60 @@ Telegram требует HTTPS и для вебхуков, и для Mini App, п
    ```
 
 Остальные команды суперадмина: `.venv\Scripts\python -m app.cli --help`.
+
+## Рабочий запуск на своём компьютере (без VPS и домена)
+
+Компьютер (ваш или ПК в клубе) работает как сервер. Всё поднимается одной командой:
+
+| Сервис | Что делает |
+| --- | --- |
+| `db` | PostgreSQL |
+| `api` | FastAPI + боты всех клубов |
+| `web` | Caddy: собранный Mini App на `/app/`, проксирует `/api`, `/tg`, `/health` в `api` |
+| `tunnel` | cloudflared: публичный HTTPS-адрес `https://….trycloudflare.com` |
+| `backup` | Бэкап базы сразу при старте и затем раз в сутки в `BACKUP_DIR` |
+
+```bash
+docker compose -f docker-compose.yml -f deploy/compose.server.yml up -d --build
+```
+
+**Адрес туннеля меняется при каждом перезапуске** — это нормально: API раз в минуту спрашивает его у cloudflared и при смене сам перенастраивает вебхуки и кнопку «Играть» у всех ботов (в логах `api`: «Новый адрес туннеля»). QR-коды у кассы ведут на `t.me/<бот>` и не меняются. Кнопки «Играть» в *старых* сообщениях бота после смены адреса не откроются — гостю достаточно нажать кнопку «Играть» у поля ввода или отправить `/start`.
+
+Статус и логи:
+
+```bash
+docker compose -f docker-compose.yml -f deploy/compose.server.yml ps
+```
+
+```bash
+docker compose -f docker-compose.yml -f deploy/compose.server.yml logs -f api
+```
+
+Остановить:
+
+```bash
+docker compose -f docker-compose.yml -f deploy/compose.server.yml down
+```
+
+### Чтобы платформа работала сама
+
+1. Docker Desktop → Settings → General → включить **Start Docker Desktop when you sign in**. Все сервисы с `restart: unless-stopped` поднимутся после перезагрузки сами.
+2. Windows → Параметры → Система → Питание: **сон — никогда** (при подключении к сети). Пока компьютер спит или выключен, бот не отвечает.
+3. Если компьютер может перезагрузиться без вас (обновления Windows), включите автовход в Windows — Docker Desktop стартует только после входа в систему.
+
+### Бэкапы
+
+Файлы `bot-ГГГГ-ММ-ДД_ЧЧММ.sql.gz` в папке `BACKUP_DIR` из `.env` (по умолчанию `./backups`), хранятся `BACKUP_KEEP_DAYS` дней. Чтобы копии пережили потерю компьютера, укажите папку OneDrive / Google Drive или другой диск, например `BACKUP_DIR=C:/Users/<имя>/OneDrive/bot-backups`, и перезапустите стек.
+
+Восстановление (база должна быть запущена):
+
+```bash
+gunzip -c backups/bot-2026-11-17_1008.sql.gz | docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
+
+### Режим разработки и рабочий режим — не одновременно
+
+Оба поднимают свой туннель и переключают на себя вебхуки ботов. Перед разработкой остановите рабочий стек (`down`), после — запустите снова.
 
 ## База в DBeaver
 
