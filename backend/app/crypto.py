@@ -1,0 +1,20 @@
+"""Шифрование токенов ботов ключом ENCRYPTION_KEY (Fernet: AES + HMAC)."""
+
+from functools import lru_cache
+
+from cryptography.fernet import Fernet
+
+from app.config import get_settings
+
+
+@lru_cache
+def _fernet() -> Fernet:
+    return Fernet(get_settings().encryption_key.get_secret_value().encode())
+
+
+def encrypt(value: str) -> str:
+    return _fernet().encrypt(value.encode()).decode()
+
+
+def decrypt(value: str) -> str:
+    return _fernet().decrypt(value.encode()).decode()

@@ -14,7 +14,29 @@ class Settings(BaseSettings):
     database_url: str
     encryption_key: SecretStr
     public_base_url: str = "http://localhost:8000"
+    # Адрес Mini App; по умолчанию — /app/ на том же домене.
+    miniapp_url: str | None = None
     env: str = "dev"
+    # Только для разработки: токен тестового бота для команды connect-bot.
+    test_bot_token: SecretStr | None = None
+
+    @property
+    def base_url(self) -> str:
+        return self.public_base_url.rstrip("/")
+
+    # Сколько секунд initData из Mini App считается свежим.
+    init_data_max_age_seconds: int = 24 * 3600
+
+    @property
+    def webapp_url(self) -> str:
+        return self.miniapp_url or f"{self.base_url}/app/"
+
+    def webapp_url_for(self, bot_id: int) -> str:
+        """Mini App общий для всех клубов; по ?bot= он узнаёт, через какого бота открыт.
+
+        Подделать параметр бесполезно: initData проверяется токеном именно этого бота.
+        """
+        return f"{self.webapp_url}?bot={bot_id}"
 
 
 @lru_cache

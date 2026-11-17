@@ -84,6 +84,38 @@ cd backend
 .venv\Scripts\python -m app.seed
 ```
 
+## Бот в Telegram при разработке
+
+Telegram шлёт вебхуки только на HTTPS, поэтому API открывается наружу туннелем cloudflared.
+
+1. Запустить проект (`docker compose up -d --build`) и туннель:
+
+   ```bash
+   cloudflared tunnel --url http://localhost:8000
+   ```
+
+2. Скопировать адрес вида `https://….trycloudflare.com` из вывода в `PUBLIC_BASE_URL` в `.env` и пересоздать API:
+
+   ```bash
+   docker compose up -d
+   ```
+
+3. Первый раз — подключить бота к клубу (токен берётся из `TEST_BOT_TOKEN`):
+
+   ```bash
+   cd backend
+   .venv\Scripts\python -m app.cli connect-bot --club-id 1
+   ```
+
+   При следующих запусках адрес туннеля меняется — достаточно перенастроить вебхуки:
+
+   ```bash
+   cd backend
+   .venv\Scripts\python -m app.cli refresh-webhooks
+   ```
+
+Остальные команды суперадмина: `.venv\Scripts\python -m app.cli --help`.
+
 ## База в DBeaver
 
 Хост `localhost`, порт `5432`; пользователь, пароль и имя базы — из `.env` (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`).

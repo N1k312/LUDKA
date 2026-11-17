@@ -6,17 +6,22 @@
 """
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
 from alembic import command
 from alembic.config import Config
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
+from app.bots.registry import registry
 from app.config import get_settings
+from app.db import get_session
+from app.main import app
+from tests.telegram_fake import FakeTelegram
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
@@ -55,6 +60,29 @@ async def engine(test_db_url: str) -> AsyncIterator[AsyncEngine]:
     eng = create_async_engine(test_db_url)
     yield eng
     await eng.dispose()
+
+
+@pytest.fixture
+def telegram(monkeypatch) -> Iterator[FakeTelegram]:
+    """Все боты ходят в фейковый Telegram; PUBLIC_BASE_URL — https."""
+    fake = FakeTelegram()
+    registry.use_session(fake)
+    monkeypatch.setattr(get_settings(), "public_base_url", "https://example.test")
+    yield fake
+    registry.use_session(None)
+
+
+@pytest.fixture
+async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
+    """HTTP-клиент приложения, работающий в транзакции теста."""
+
+    async def override_session():
+        yield session
+
+    app.dependency_overrides[get_session] = override_session
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture

@@ -4,3 +4,7 @@ pydantic-settings>=2.6
 sqlalchemy[asyncio]>=2.0.36
 asyncpg>=0.30
 alembic>=1.14
+aiogram>=3.15
+cryptography>=44
+segno>=1.6
+tzdata>=2024.1
