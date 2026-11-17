@@ -7,7 +7,7 @@
 | Папка | Что внутри |
 | --- | --- |
 | `backend/` | FastAPI, боты aiogram, работа с базой, тесты |
-| `miniapp/` | Mini App на React + Vite (появится на шаге 6) |
+| `miniapp/` | Mini App на React + Vite + TypeScript |
 | `deploy/` | Конфиги для сервера (появятся на шаге 9) |
 
 ## Первый запуск
@@ -84,14 +84,39 @@ cd backend
 .venv\Scripts\python -m app.seed
 ```
 
-## Бот в Telegram при разработке
+## Mini App
 
-Telegram шлёт вебхуки только на HTTPS, поэтому API открывается наружу туннелем cloudflared.
+Зависимости (один раз):
 
-1. Запустить проект (`docker compose up -d --build`) и туннель:
+```bash
+cd miniapp
+npm install
+```
+
+Dev-сервер с горячей перезагрузкой: http://127.0.0.1:5173/app/. Он же проксирует `/api`, `/tg` и `/health` в бэкенд на порту 8000.
+
+```bash
+cd miniapp
+npm run dev
+```
+
+Без Telegram интерфейс открывается только в мок-режиме с тестовыми данными: `/app/?mock`, а также `?mock=unregistered`, `?mock=unavailable`, `?mock=cooldown`. В production-сборку мок не попадает.
+
+Сборка (проверка типов + `dist/`):
+
+```bash
+cd miniapp
+npm run build
+```
+
+## Бот и Mini App в Telegram при разработке
+
+Telegram требует HTTPS и для вебхуков, и для Mini App, поэтому наружу открывается dev-сервер Mini App туннелем cloudflared, а он передаёт API и вебхуки в бэкенд.
+
+1. Запустить бэкенд (`docker compose up -d --build`), Mini App (`npm run dev` в `miniapp`) и туннель:
 
    ```bash
-   cloudflared tunnel --url http://localhost:8000
+   cloudflared tunnel --url http://127.0.0.1:5173
    ```
 
 2. Скопировать адрес вида `https://….trycloudflare.com` из вывода в `PUBLIC_BASE_URL` в `.env` и пересоздать API:
@@ -107,7 +132,7 @@ Telegram шлёт вебхуки только на HTTPS, поэтому API о�
    .venv\Scripts\python -m app.cli connect-bot --club-id 1
    ```
 
-   При следующих запусках адрес туннеля меняется — достаточно перенастроить вебхуки:
+   При следующих запусках адрес туннеля меняется — достаточно перенастроить вебхуки и кнопку Mini App:
 
    ```bash
    cd backend

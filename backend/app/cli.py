@@ -10,6 +10,7 @@
                                      или запрашивается скрытым вводом
   add-staff --club-id N --telegram-id N [--role admin|owner]
   make-qr --club-id N [--out файл.png|.svg] [--startapp]   QR для печати у кассы
+  set-cooldown --club-id N --seconds N   лимит спинов (604800 = 7 дней)
   refresh-webhooks                   перенастроить всех ботов после смены PUBLIC_BASE_URL
 """
 
@@ -156,6 +157,16 @@ async def cmd_add_staff(db: AsyncSession, args: argparse.Namespace) -> None:
     print(f"Telegram id {args.telegram_id} — {args.role} в клубе «{club.name}»")
 
 
+async def cmd_set_cooldown(db: AsyncSession, args: argparse.Namespace) -> None:
+    club = await get_club(db, args.club_id)
+    config = await db.get(GameConfig, (club.id, GameType.WHEEL))
+    if config is None:
+        config = GameConfig(club_id=club.id, game_type=GameType.WHEEL)
+        db.add(config)
+    config.cooldown_seconds = args.seconds
+    print(f"Лимит колеса в клубе «{club.name}»: один спин в {args.seconds} с")
+
+
 async def cmd_make_qr(db: AsyncSession, args: argparse.Namespace) -> None:
     club = await get_club(db, args.club_id)
     club_bot = await db.scalar(select(ClubBot).where(ClubBot.club_id == club.id))
@@ -212,6 +223,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--telegram-id", type=int, required=True)
     p.add_argument("--role", choices=[r.value for r in StaffRole], default=StaffRole.ADMIN.value)
     p.set_defaults(func=cmd_add_staff)
+
+    p = sub.add_parser("set-cooldown", help="как часто можно крутить колесо (в секундах)")
+    p.add_argument("--club-id", type=int, required=True)
+    p.add_argument("--seconds", type=int, required=True, help="604800 = 7 дней")
+    p.set_defaults(func=cmd_set_cooldown)
 
     p = sub.add_parser("make-qr", help="QR-код со ссылкой на бота для печати у кассы")
     p.add_argument("--club-id", type=int, required=True)
