@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     # Запуск на своём компьютере: адрес quick-туннеля cloudflared берётся из его
     # метрик (/quicktunnel), и при смене адреса боты перенастраиваются сами.
     tunnel_metrics_url: str | None = None
+    # Те же метрики, видимые с компьютера (для команд app.cli): порт проброшен в compose.server.yml.
+    tunnel_local_metrics_url: str = "http://127.0.0.1:2000"
 
     # Владельцы платформы: Telegram id через запятую. Во всех ботах клубов
     # у них максимальные права: назначают суперадминов и любых сотрудников.

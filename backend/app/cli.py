@@ -40,6 +40,7 @@ from app.db import SessionLocal, engine
 from app.logging_setup import setup_logging
 from app.services import subscription
 from app.services.qr import save_qr, start_link
+from app.services.tunnel import PublicUrlError, resolve_public_url
 from app.models import (
     BotStatus,
     Club,
@@ -85,6 +86,16 @@ async def get_subscription(db: AsyncSession, club: Club) -> Subscription:
         db.add(sub)
         await db.flush()
     return sub
+
+
+async def use_live_public_url() -> str:
+    """Перед изменением ботов берём живой адрес, а не устаревший из .env."""
+    url = await resolve_public_url()
+    settings = get_settings()
+    if url != settings.base_url:
+        print(f"PUBLIC_BASE_URL в .env устарел — использую текущий адрес туннеля: {url}")
+    settings.public_base_url = url
+    return url
 
 
 async def cmd_list_clubs(db: AsyncSession, args: argparse.Namespace) -> None:
@@ -152,6 +163,7 @@ async def cmd_list_prizes(db: AsyncSession, args: argparse.Namespace) -> None:
 
 async def cmd_connect_bot(db: AsyncSession, args: argparse.Namespace) -> None:
     club = await get_club(db, args.club_id)
+    await use_live_public_url()
     secret = get_settings().test_bot_token
     token = secret.get_secret_value() if secret else ""
     if not token:
@@ -211,6 +223,8 @@ async def cmd_refresh_webhooks(db: AsyncSession, args: argparse.Namespace) -> No
     bots = (
         await db.scalars(select(ClubBot).where(ClubBot.status == BotStatus.ACTIVE))
     ).all()
+    if bots:
+        await use_live_public_url()
     for club_bot in bots:
         await refresh_bot(db, club_bot)
         print(f"@{club_bot.username}: вебхук → {get_settings().base_url}/tg/{club_bot.bot_id}")
@@ -327,7 +341,7 @@ async def run(args: argparse.Namespace) -> int:
             await args.func(db, args)
             await db.commit()
         return 0
-    except (CliError, BotSetupError) as e:
+    except (CliError, BotSetupError, PublicUrlError) as e:
         print(f"Ошибка: {e}", file=sys.stderr)
         return 1
     except TelegramAPIError as e:
