@@ -1,0 +1,18 @@
+# Секреты
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+
+# Редакторы и ОС
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
