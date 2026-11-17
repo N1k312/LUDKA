@@ -16,6 +16,10 @@ def local_date(value: datetime, club: Club) -> str:
     return value.astimezone(ZoneInfo(club.timezone)).strftime("%d.%m.%Y")
 
 
+def local_datetime(value: datetime, club: Club) -> str:
+    return value.astimezone(ZoneInfo(club.timezone)).strftime("%d.%m.%Y %H:%M")
+
+
 def prize_message(club: Club, option: PrizeOption, code: PrizeCode) -> str:
     prize = f"{option.emoji} {option.title}" if option.emoji else option.title
     return (

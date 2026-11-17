@@ -27,7 +27,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bots.registry import registry
-from app.bots.setup import BotSetupError, connect_bot, refresh_bot
+from app.bots.setup import BotSetupError, connect_bot, refresh_bot, set_staff_commands
 from app.config import get_settings
 from app.db import SessionLocal, engine
 from app.services.qr import save_qr, start_link
@@ -155,6 +155,12 @@ async def cmd_add_staff(db: AsyncSession, args: argparse.Namespace) -> None:
         db.add(staff)
     staff.role = StaffRole(args.role)
     print(f"Telegram id {args.telegram_id} — {args.role} в клубе «{club.name}»")
+    club_bot = await db.scalar(select(ClubBot).where(ClubBot.club_id == club.id))
+    if club_bot is not None:
+        if await set_staff_commands(registry.get(club_bot), args.telegram_id):
+            print("Команда /admin добавлена в меню бота у этого сотрудника")
+        else:
+            print("Меню команд не обновлено: сотрудник ещё не писал боту. /admin всё равно работает")
 
 
 async def cmd_set_cooldown(db: AsyncSession, args: argparse.Namespace) -> None:

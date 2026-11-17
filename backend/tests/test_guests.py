@@ -1,6 +1,5 @@
 """Регистрация гостя через бота: /start → свой номер → согласие → «Играть»."""
 
-from itertools import count
 from pathlib import Path
 
 import pytest
@@ -14,71 +13,14 @@ from app.bots.setup import connect_bot
 from app.models import Club, ClubBot, Guest
 from app.services.guests import normalize_phone
 from app.services.qr import save_qr, start_link
-from tests.telegram_fake import FakeTelegram
+from tests.botkit import GUEST_ID, BotClient, callback_update, contact_update, message_update
 
 TOKEN_A = "123456789:AAFakeTokenForTestsOnly_abcdefghijk"
 TOKEN_B = "987654321:AAAnotherFakeTokenForTests_abcdefghij"
-GUEST_ID = 555
-_update_ids = count(1)
-
-
-def message_update(text: str | None = None, *, user_id: int = GUEST_ID, **extra) -> dict:
-    message = {
-        "message_id": next(_update_ids),
-        "date": 1_700_000_000,
-        "chat": {"id": user_id, "type": "private"},
-        "from": {"id": user_id, "is_bot": False, "first_name": "Гость", "username": "guest"},
-        **extra,
-    }
-    if text is not None:
-        message["text"] = text
-        if text.startswith("/"):
-            command = text.split()[0]
-            message["entities"] = [{"type": "bot_command", "offset": 0, "length": len(command)}]
-    return {"update_id": next(_update_ids), "message": message}
-
-
-def contact_update(phone: str, contact_user_id: int | None, user_id: int = GUEST_ID) -> dict:
-    contact = {"phone_number": phone, "first_name": "Гость"}
-    if contact_user_id is not None:
-        contact["user_id"] = contact_user_id
-    return message_update(user_id=user_id, contact=contact)
 
 
 def consent_update(user_id: int = GUEST_ID) -> dict:
-    return {
-        "update_id": next(_update_ids),
-        "callback_query": {
-            "id": str(next(_update_ids)),
-            "from": {"id": user_id, "is_bot": False, "first_name": "Гость"},
-            "chat_instance": "1",
-            "data": CONSENT_CALLBACK,
-            "message": {
-                "message_id": 99,
-                "date": 1_700_000_000,
-                "chat": {"id": user_id, "type": "private"},
-                "from": {"id": 123456789, "is_bot": True, "first_name": "Test Club"},
-                "text": "Правила",
-            },
-        },
-    }
-
-
-class BotClient:
-    """Отправляет обновления в вебхук бота клуба и возвращает ответы бота."""
-
-    def __init__(self, client, telegram: FakeTelegram, club_bot: ClubBot):
-        self.client, self.telegram, self.club_bot = client, telegram, club_bot
-
-    async def send(self, update: dict) -> list:
-        self.telegram.calls.clear()
-        response = await self.client.post(
-            f"/tg/{self.club_bot.bot_id}",
-            json=update,
-            headers={"X-Telegram-Bot-Api-Secret-Token": self.club_bot.webhook_secret},
-        )
-        assert response.status_code == 200
-        return self.telegram.of(methods.SendMessage)
+    return callback_update(CONSENT_CALLBACK, user_id=user_id)
 
 
 async def make_club(db: AsyncSession, name: str) -> Club:

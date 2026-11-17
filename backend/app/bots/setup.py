@@ -3,7 +3,7 @@
 import secrets
 
 from aiogram import Bot
-from aiogram.types import BotCommand, MenuButtonWebApp, WebAppInfo
+from aiogram.types import BotCommand, BotCommandScopeChat, MenuButtonWebApp, WebAppInfo
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,6 +13,12 @@ from app.crypto import encrypt
 from app.models import BotStatus, Club, ClubBot
 
 ALLOWED_UPDATES = ["message", "callback_query"]
+
+GUEST_COMMANDS = [
+    BotCommand(command="start", description="Начать"),
+    BotCommand(command="rules", description="Правила акции"),
+]
+STAFF_COMMANDS = [*GUEST_COMMANDS, BotCommand(command="admin", description="Админ-панель")]
 
 
 class BotSetupError(Exception):
@@ -44,12 +50,7 @@ async def configure_bot(bot: Bot, club_bot: ClubBot, club: Club) -> None:
             text="Играть", web_app=WebAppInfo(url=settings.webapp_url_for(club_bot.bot_id))
         )
     )
-    await bot.set_my_commands(
-        [
-            BotCommand(command="start", description="Начать"),
-            BotCommand(command="rules", description="Правила акции"),
-        ]
-    )
+    await bot.set_my_commands(GUEST_COMMANDS)
     await bot.set_my_description(
         description=(
             f"Бот клуба «{club.name}».\n\n"
@@ -97,3 +98,15 @@ async def refresh_bot(db: AsyncSession, club_bot: ClubBot) -> None:
     _require_https()
     club = await db.get(Club, club_bot.club_id)
     await configure_bot(registry.get(club_bot), club_bot, club)
+
+
+async def set_staff_commands(bot: Bot, telegram_id: int) -> bool:
+    """Показывает /admin в меню команд только этому сотруднику.
+
+    Telegram вернёт ошибку, если человек ещё ни разу не писал боту, — тогда False.
+    """
+    try:
+        await bot.set_my_commands(STAFF_COMMANDS, scope=BotCommandScopeChat(chat_id=telegram_id))
+        return True
+    except Exception:
+        return False
