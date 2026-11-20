@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bots.registry import registry
 from app.db import SessionLocal, engine, get_session
 from app.logging_setup import install_redaction, setup_logging
-from app.routes import miniapp, telegram
+from app.platform_bot.setup import configure_platform_bot
+from app.routes import miniapp, platform, telegram
 from app.config import get_settings
 from app.services.subscription import refresh_statuses
 from app.services.tunnel import watch_tunnel
@@ -39,7 +40,13 @@ async def lifespan(app: FastAPI):
     install_redaction()  # на случай, если uvicorn пересоздал обработчики
     tasks = [asyncio.create_task(watch_subscriptions())]
     if get_settings().tunnel_metrics_url:
+        # Адрес туннеля неизвестен до первого опроса: боты (и бот платформы) настроятся в нём.
         tasks.append(asyncio.create_task(watch_tunnel(SessionLocal)))
+    else:
+        try:
+            await configure_platform_bot()
+        except Exception:
+            logger.exception("Не удалось настроить бота платформы")
     yield
     for task in tasks:
         task.cancel()
@@ -50,6 +57,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Club Loyalty Games", lifespan=lifespan)
+app.include_router(platform.router)  # /tg/platform — раньше /tg/{bot_id}
 app.include_router(telegram.router)
 app.include_router(miniapp.router)
 

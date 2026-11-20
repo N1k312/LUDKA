@@ -229,7 +229,7 @@ async def show_staff(message: Message, club: Club, db: AsyncSession, role: Role)
     await message.answer(text, reply_markup=keyboard)
 
 
-async def _greet_new_staff(bot: Bot, club: Club, telegram_id: int, title: str) -> None:
+async def greet_new_staff(bot: Bot, club: Club, telegram_id: int, title: str) -> None:
     await set_staff_commands(bot, telegram_id)
     try:
         await bot.send_message(
@@ -255,11 +255,11 @@ async def user_picked(message: Message, club: Club, db: AsyncSession, role: Role
             if previous is not None:
                 text += f"\nПрежний суперадмин ({html.quote(Person(previous.telegram_id, previous.first_name, previous.username).title())}) теперь админ."
             await message.answer(text)
-            await _greet_new_staff(message.bot, club, person.telegram_id, "суперадмин")
+            await greet_new_staff(message.bot, club, person.telegram_id, "суперадмин")
         elif shared.request_id == PICK_ADMIN:
             await add_admin(db, club, role, person)
             await message.answer(f"🔑 {html.quote(person.title())} — админ клуба {html.quote(club.name)}.")
-            await _greet_new_staff(message.bot, club, person.telegram_id, "админ")
+            await greet_new_staff(message.bot, club, person.telegram_id, "админ")
     except StaffError as e:
         await message.answer(f"⛔ {e}")
 

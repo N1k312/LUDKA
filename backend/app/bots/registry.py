@@ -45,6 +45,15 @@ class BotRegistry:
         self._bots[club_bot.bot_id] = (club_bot.token_encrypted, bot)
         return bot
 
+    def for_token(self, token: str) -> Bot:
+        """Кэшированный бот по токену (для бота платформы, токен которого в .env)."""
+        key = -abs(hash(token))  # отрицательный ключ не пересекается с id ботов клубов
+        cached = self._bots.get(key)
+        if cached is None:
+            cached = (token, self.bot_for_token(token))
+            self._bots[key] = cached
+        return cached[1]
+
     def forget(self, bot_id: int) -> None:
         self._bots.pop(bot_id, None)
 

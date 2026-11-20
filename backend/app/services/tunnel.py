@@ -86,11 +86,16 @@ async def resolve_public_url(
     )
 
 
-async def sync_public_url(db: AsyncSession, fetch: Fetcher = fetch_quicktunnel_url) -> bool:
-    """Обновляет PUBLIC_BASE_URL и ботов, если адрес туннеля сменился. True — было изменение."""
+async def sync_public_url(
+    db: AsyncSession, fetch: Fetcher = fetch_quicktunnel_url, force: bool = False
+) -> bool:
+    """Обновляет PUBLIC_BASE_URL и ботов, если адрес туннеля сменился. True — было изменение.
+
+    force — перенастроить ботов даже при том же адресе (первый опрос после старта API).
+    """
     url = await fetch()
     settings = get_settings()
-    if not url or url == settings.base_url:
+    if not url or (url == settings.base_url and not force):
         return False
 
     logger.info("Новый адрес туннеля: %s — перенастраиваю ботов", url)
@@ -101,6 +106,12 @@ async def sync_public_url(db: AsyncSession, fetch: Fetcher = fetch_quicktunnel_u
             await refresh_bot(db, club_bot)
         except Exception:
             logger.exception("Не удалось перенастроить бота %s", club_bot.bot_id)
+    try:
+        from app.platform_bot.setup import configure_platform_bot
+
+        await configure_platform_bot()
+    except Exception:
+        logger.exception("Не удалось перенастроить бота платформы")
     return True
 
 
@@ -109,7 +120,7 @@ async def watch_tunnel(session_factory: Callable[[], AsyncSession]) -> None:
     while True:
         try:
             async with session_factory() as db:
-                await sync_public_url(db)
+                await sync_public_url(db, force=not known)
             known = True
         except Exception as e:
             # Туннель ещё поднимается или временно недоступен — попробуем позже.

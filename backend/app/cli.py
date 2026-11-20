@@ -30,7 +30,7 @@ from pathlib import Path
 
 from aiogram.exceptions import TelegramAPIError, TelegramUnauthorizedError
 from aiogram.utils.token import TokenValidationError
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bots.registry import registry
@@ -38,7 +38,8 @@ from app.bots.setup import BotSetupError, connect_bot, refresh_bot, set_staff_co
 from app.config import get_settings
 from app.db import SessionLocal, engine
 from app.logging_setup import setup_logging
-from app.services import subscription
+from app.services import clubs, subscription
+from app.platform_bot.setup import configure_platform_bot
 from app.services.qr import save_qr, start_link
 from app.services.tunnel import PublicUrlError, resolve_public_url
 from app.models import (
@@ -54,7 +55,6 @@ from app.models import (
     Subscription,
 )
 
-WHEEL_COOLDOWN_SECONDS = 7 * 24 * 3600
 
 
 class CliError(Exception):
@@ -112,37 +112,13 @@ async def cmd_list_clubs(db: AsyncSession, args: argparse.Namespace) -> None:
 
 
 async def cmd_create_club(db: AsyncSession, args: argparse.Namespace) -> None:
-    club = Club(name=args.name, timezone=args.timezone)
-    db.add(club)
-    await db.flush()
-    db.add(subscription.new_trial(club.id))
-    db.add(
-        GameConfig(
-            club_id=club.id, game_type=GameType.WHEEL, cooldown_seconds=WHEEL_COOLDOWN_SECONDS
-        )
-    )
+    club = await clubs.create_club(db, args.name, args.timezone)
     print(f"Создан клуб id={club.id} «{club.name}», пробный период 14 дней")
 
 
 async def cmd_add_prize(db: AsyncSession, args: argparse.Namespace) -> None:
     club = await get_club(db, args.club_id)
-    position = await db.scalar(
-        select(func.coalesce(func.max(PrizeOption.position) + 1, 0)).where(
-            PrizeOption.club_id == club.id
-        )
-    )
-    db.add(
-        PrizeOption(
-            club_id=club.id,
-            game_type=GameType.WHEEL,
-            title=args.title,
-            emoji=args.emoji,
-            weight=args.weight,
-            is_empty=args.empty,
-            ttl_days=args.ttl_days,
-            position=position,
-        )
-    )
+    await clubs.add_prize(db, club, args.title, args.weight, args.emoji, args.empty, args.ttl_days)
     print(f"Приз «{args.title}» (вес {args.weight}) добавлен в клуб «{club.name}»")
 
 
@@ -223,13 +199,14 @@ async def cmd_refresh_webhooks(db: AsyncSession, args: argparse.Namespace) -> No
     bots = (
         await db.scalars(select(ClubBot).where(ClubBot.status == BotStatus.ACTIVE))
     ).all()
-    if bots:
-        await use_live_public_url()
+    await use_live_public_url()
     for club_bot in bots:
         await refresh_bot(db, club_bot)
         print(f"@{club_bot.username}: вебхук → {get_settings().base_url}/tg/{club_bot.bot_id}")
     if not bots:
-        print("Нет подключённых ботов")
+        print("Нет подключённых ботов клубов")
+    if await configure_platform_bot():
+        print(f"Бот платформы: вебхук → {get_settings().base_url}/tg/platform")
 
 
 async def cmd_extend_subscription(db: AsyncSession, args: argparse.Namespace) -> None:

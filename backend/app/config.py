@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     # Адрес Mini App; по умолчанию — /app/ на том же домене.
     miniapp_url: str | None = None
     env: str = "dev"
+    # Бот платформы: через него владелец подключает клубы без консоли.
+    platform_bot_token: SecretStr | None = None
     # Только для разработки: токен тестового бота для команды connect-bot.
     test_bot_token: SecretStr | None = None
 
