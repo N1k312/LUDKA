@@ -14,6 +14,8 @@ from contextlib import suppress
 from aiogram import Bot, F, Router, html
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import BaseFilter, Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -31,7 +33,8 @@ from app.bots.notify import local_datetime
 from app.bots.setup import reset_commands, set_staff_commands
 from app.config import get_settings
 from app.models import Club, ClubStaff, RedemptionResult, StaffRole
-from app.services import stats
+from app.services import guest_list, stats
+from app.services.guests import is_registered
 from app.services.redemption import FAILED_WINDOW, Outcome, check_code, normalize_code, redeem_code
 from app.services.staff import (
     ROLE_TITLES,
@@ -53,7 +56,15 @@ SCAN_BUTTON = "📷 Сканировать QR"
 ENTER_BUTTON = "⌨️ Ввести код"
 STAFF_BUTTON = "👥 Сотрудники"
 TODAY_BUTTON = "📋 Сегодня"
+GUESTS_BUTTON = "🙋 Гости"
 NEXT_CALLBACK = "admin:next"
+GUESTS_PAGE = "g:list:"
+GUEST_CARD = "g:card:"
+GUEST_FIND = "g:find"
+
+
+class GuestSearch(StatesGroup):
+    query = State()
 ADD_ADMIN_BUTTON = "➕ Добавить админа"
 SUPERADMIN_BUTTON = "👑 Назначить суперадмина"
 REMOVE_PREFIX = "staff:rm:"
@@ -93,7 +104,7 @@ def admin_keyboard(bot_id: int, role: Role) -> ReplyKeyboardMarkup:
     scan_url = f"{get_settings().webapp_url_for(bot_id)}&scan=1"
     rows = [[KeyboardButton(text=SCAN_BUTTON, web_app=WebAppInfo(url=scan_url)),
              KeyboardButton(text=ENTER_BUTTON)],
-            [KeyboardButton(text=TODAY_BUTTON)]]
+            [KeyboardButton(text=TODAY_BUTTON), KeyboardButton(text=GUESTS_BUTTON)]]
     if can_manage_admins(role):
         rows.append([_pick_user(ADD_ADMIN_BUTTON, PICK_ADMIN), KeyboardButton(text=STAFF_BUTTON)])
     if can_assign_superadmin(role):
@@ -191,6 +202,139 @@ async def _check_and_reply(message: Message, club: Club, db: AsyncSession, raw: 
     outcome = await check_code(db, club, message.from_user.id, raw)
     text, keyboard = describe(outcome, club, message.from_user.id, await redeemer_name(db, club, outcome))
     await message.answer(text, reply_markup=keyboard)
+
+
+# --- Гости клуба ---------------------------------------------------------------------------
+# Обработчик поиска объявлен раньше распознавания промокода: в режиме поиска текст вроде
+# «ANDREW» — это имя, а не код.
+
+
+def guest_button(row: guest_list.GuestRow, page: int) -> InlineKeyboardButton:
+    g = row.guest
+    icon, _ = guest_list.status(g)
+    name = g.first_name or (f"@{g.username}" if g.username else f"id {g.telegram_id}")
+    extra = f" · 🎡{row.spins}" + (f" · 🎁{row.active_codes}" if row.active_codes else "")
+    return InlineKeyboardButton(text=f"{icon} {name}{extra}"[:60], callback_data=f"{GUEST_CARD}{g.id}:{page}")
+
+
+async def guests_view(db: AsyncSession, club: Club, number: int) -> tuple[str, InlineKeyboardMarkup]:
+    s = await guest_list.summary(db, club)
+    rows, pages = await guest_list.page(db, club, number)
+    number = min(max(number, 0), pages - 1)
+    text = (
+        f"🙋 <b>Гости</b> клуба {html.quote(club.name)}\n\n"
+        f"Всего: {s['total']} · регистрация завершена: {s['registered']} · "
+        f"с активными призами: {s['with_prizes']}\n\n"
+        "✅ — зарегистрирован, 📱 — нет номера, 📜 — правила не приняты. 🎡 — спинов, 🎁 — активных призов.\n"
+        "Нажмите на гостя, чтобы открыть карточку."
+    )
+    if not rows:
+        text += "\n\nГостей пока нет."
+    buttons = [[guest_button(r, number)] for r in rows]
+    nav = []
+    if number > 0:
+        nav.append(InlineKeyboardButton(text="◀️", callback_data=f"{GUESTS_PAGE}{number - 1}"))
+    if pages > 1:
+        nav.append(InlineKeyboardButton(text=f"{number + 1}/{pages}", callback_data=f"{GUESTS_PAGE}{number}"))
+    if number < pages - 1:
+        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"{GUESTS_PAGE}{number + 1}"))
+    if nav:
+        buttons.append(nav)
+    buttons.append([InlineKeyboardButton(text="🔎 Найти гостя", callback_data=GUEST_FIND)])
+    return text, InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def card_text(club: Club, c: guest_list.GuestCard) -> str:
+    g = c.row.guest
+    icon, label = guest_list.status(g)
+    name = html.quote(g.first_name or "Гость")
+    if g.username:
+        name += f" (@{html.quote(g.username)})"
+    if not is_registered(g):
+        next_spin = "после регистрации"
+    elif c.next_spin is None:
+        next_spin = "доступен сейчас"
+    else:
+        next_spin = local_datetime(c.next_spin, club)
+    lines = [
+        f"🙋 <b>{name}</b>",
+        "",
+        f"Статус: {icon} {label}",
+        f"Телефон: {guest_list.masked_phone(g)}",
+        f"Telegram id: <code>{g.telegram_id}</code>",
+        f"Впервые написал боту: {local_datetime(g.created_at, club)}",
+        f"Правила приняты: {local_datetime(g.consent_at, club) if g.consent_at else '—'}",
+        "",
+        f"Спинов: {c.row.spins}" + (f" · последний: {local_datetime(c.row.last_play, club)}" if c.row.last_play else ""),
+        f"Следующий спин: {next_spin}",
+        f"Призы: активных {c.row.active_codes} · получено {c.redeemed} · истекло {c.expired}",
+    ]
+    if c.recent_codes:
+        marks = {"active": "🟢", "redeemed": "✅", "expired": "⌛"}
+        lines += ["", "Последние промокоды:"]
+        for code, st in c.recent_codes:
+            when = (f"получен {local_datetime(code.redeemed_at, club)}" if code.redeemed_at
+                    else f"до {local_datetime(code.expires_at, club)}")
+            lines.append(f"{marks[st]} <code>{code.code}</code> — {html.quote(code.title)}, {when}")
+    return "\n".join(lines)
+
+
+async def edit_or_answer(callback: CallbackQuery, text: str, markup: InlineKeyboardMarkup) -> None:
+    with suppress(TelegramAPIError):  # «message is not modified» при повторном нажатии
+        await callback.message.edit_text(text, reply_markup=markup)
+    with suppress(TelegramAPIError):
+        await callback.answer()
+
+
+@router.message(F.text == GUESTS_BUTTON)
+async def guests(message: Message, club: Club, db: AsyncSession, state: FSMContext) -> None:
+    await state.clear()
+    text, markup = await guests_view(db, club, 0)
+    await message.answer(text, reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith(GUESTS_PAGE))
+async def guests_page(callback: CallbackQuery, club: Club, db: AsyncSession) -> None:
+    raw = callback.data.removeprefix(GUESTS_PAGE)
+    number = int(raw) if raw.isdigit() else 0
+    text, markup = await guests_view(db, club, number)
+    await edit_or_answer(callback, text, markup)
+
+
+@router.callback_query(F.data.startswith(GUEST_CARD))
+async def guest_card(callback: CallbackQuery, club: Club, db: AsyncSession) -> None:
+    try:
+        guest_id, page_number = (int(x) for x in callback.data.removeprefix(GUEST_CARD).split(":"))
+    except ValueError:
+        await callback.answer("Некорректный запрос", show_alert=True)
+        return
+    c = await guest_list.card(db, club, guest_id)
+    if c is None:  # гость другого клуба или уже удалён — одинаковый ответ
+        await callback.answer("Гость не найден", show_alert=True)
+        return
+    back = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="⬅️ К списку", callback_data=f"{GUESTS_PAGE}{page_number}")]])
+    await edit_or_answer(callback, card_text(club, c), back)
+
+
+@router.callback_query(F.data == GUEST_FIND)
+async def guest_find(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(GuestSearch.query)
+    await callback.answer()
+    await callback.message.answer("🔎 Отправьте имя, @username или последние цифры номера (от 3).")
+
+
+@router.message(GuestSearch.query, F.text)
+async def guest_search(message: Message, club: Club, db: AsyncSession, state: FSMContext) -> None:
+    await state.clear()
+    rows, more = await guest_list.search(db, club, message.text)
+    if not rows:
+        await message.answer("Никого не нашлось. Нажмите «🙋 Гости», чтобы открыть список.")
+        return
+    buttons = [[guest_button(r, 0)] for r in rows]
+    note = f"\nПоказаны первые {guest_list.SEARCH_LIMIT} — уточните запрос." if more else ""
+    await message.answer(f"🔎 Найдено: {len(rows)}{'+' if more else ''}{note}",
+                         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 
 @router.message(F.web_app_data)
