@@ -31,3 +31,16 @@ export function formatCountdown(ms: number): string {
   const time = `${pad(h)}:${pad(m)}:${pad(s)}`;
   return days > 0 ? `${days} д ${time}` : time;
 }
+
+/** «сгорит через 3 дня», «сгорит через 5 ч», «сгорит меньше чем через час». */
+export function expiresIn(iso: string, now = Date.now()): string {
+  const ms = new Date(iso).getTime() - now;
+  if (ms <= 0) return "истёк";
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 1) return "сгорит меньше чем через час";
+  if (hours < 24) return `сгорит через ${hours} ч`;
+  const days = Math.floor(hours / 24);
+  const word = days % 10 === 1 && days % 100 !== 11 ? "день"
+    : [2, 3, 4].includes(days % 10) && ![12, 13, 14].includes(days % 100) ? "дня" : "дней";
+  return `сгорит через ${days} ${word}`;
+}

@@ -49,7 +49,7 @@ from tests.test_miniapp import init_data
 
 ROOT = Path(__file__).resolve().parents[3]
 GUEST, OTHER_GUEST, ADMIN, SUPER, STRANGER = 555, 556, 1001, 1002, 4242
-ENDPOINTS = [("GET", "/api/me"), ("GET", "/api/wheel"), ("POST", "/api/spin"),
+ENDPOINTS = [("GET", "/api/me"), ("GET", "/api/wheel"), ("POST", "/api/spin"), ("POST", "/api/consent"),
              ("GET", "/api/prizes"), ("GET", "/api/rules")]
 
 
@@ -311,7 +311,7 @@ def test_s14_ports_bound_to_localhost_only():
 def test_s15_web_server_exposes_only_public_paths():
     caddy = (ROOT / "deploy" / "Caddyfile").read_text(encoding="utf-8")
     proxied = re.findall(r"handle\s+(\S+)\s*\{\s*reverse_proxy", caddy)
-    assert sorted(proxied) == ["/api/*", "/health", "/tg/*"], proxied
+    assert sorted(proxied) == ["/api/*", "/health", "/media/*", "/tg/*"], proxied
     for private in ("/docs", "/openapi", "/redoc", ":8000 {"):
         assert private not in caddy
 
@@ -357,3 +357,33 @@ async def test_s17_consent_and_contact_of_other_user_rejected(session, telegram,
     guest = await session.scalar(select(Guest).where(Guest.telegram_id == GUEST))
     assert guest.phone is None and guest.consent_at is None
     assert spin.status_code == 403
+
+
+# --- S10. Картинки клубов: только содержимое папки media ---------------------------------
+
+
+@pytest.mark.parametrize("path", [
+    "/media/../.env", "/media/..%2F..%2F.env", "/media/%2e%2e/%2e%2e/.env",
+    "/media/../app/config.py", "/media/1/../../alembic.ini",
+])
+async def test_s18_media_path_traversal_blocked(lenient_client, path):
+    r = await lenient_client.get(path)
+    assert r.status_code in (400, 404), f"{path} → {r.status_code}"
+    assert "ENCRYPTION_KEY" not in r.text and "sqlalchemy" not in r.text
+
+
+# --- S11. Скрипты и конфиги для Linux-контейнеров -------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["backup.sh", "Caddyfile"])
+def test_s19_container_files_have_unix_line_endings(name):
+    """С переводами строк Windows (CRLF) sh и Caddy в контейнере падают («set: Illegal option -»)."""
+    assert b"\r\n" not in (ROOT / "deploy" / name).read_bytes()
+
+
+def test_s20_backup_waits_for_db_and_rejects_empty_dump():
+    script = "\n".join(line for line in (ROOT / "deploy" / "backup.sh").read_text(encoding="utf-8").splitlines()
+                       if not line.lstrip().startswith("#"))  # только код, без комментариев
+    assert "pg_isready" in script, "после перезагрузки бэкап может стартовать раньше базы"
+    assert "| gzip" not in script, "в «pg_dump | gzip» ошибка pg_dump теряется"
+    assert '[ -s "$dump" ]' in script, "пустой дамп не должен считаться успешным"

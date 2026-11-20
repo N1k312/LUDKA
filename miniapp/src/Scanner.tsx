@@ -5,7 +5,8 @@
 import { useEffect, useState } from "react";
 import { haptic, tg } from "./telegram";
 
-const CODE = /^\s*(?:GG[\s-]?)?[A-Z0-9]{6}\s*$/i;
+// Промокод клуба: префикс из 2–4 букв (GG, CA, …) и 6 символов.
+const CODE = /^\s*(?:[A-Z]{2,4}[\s-]?)?[A-Z0-9]{6}\s*$/i;
 // Сканер открывается автоматически один раз (StrictMode в dev вызывает эффект дважды).
 let autoOpened = false;
 

@@ -26,7 +26,8 @@ from app.crypto import decrypt
 from app.db import get_session
 from app.models import MAX_BIGINT, BotStatus, Club, ClubBot, Guest, PrizeCode, PrizeOption
 from app.services.codes import code_status
-from app.services.guests import is_registered
+from app.services import branding
+from app.services.guests import accept_consent, get_or_create_guest, is_registered
 from app.services.wheel import (
     SpinError,
     is_available,
@@ -102,14 +103,31 @@ async def me(ctx: Context, db: Db) -> dict:
     )
     return {
         "club": {"name": ctx.club.name, "timezone": ctx.club.timezone},
-        "guest": {"first_name": ctx.user.first_name, "registered": registered},
+        "guest": {
+            "first_name": ctx.user.first_name,
+            "registered": registered,
+            # Шаги регистрации для экрана в Mini App (сам номер во фронтенд не отдаётся).
+            "has_phone": ctx.guest is not None and ctx.guest.phone is not None,
+            "has_consent": ctx.guest is not None and ctx.guest.consent_at is not None,
+        },
         "available": await is_available(db, ctx.club),
         "wheel": {
             "enabled": config is not None and config.enabled,
             "cooldown_seconds": config.cooldown_seconds if config else None,
             "next_spin_at": wait_until,
         },
+        "branding": branding.resolved(ctx.club),
     }
+
+
+@router.post("/consent")
+async def consent(ctx: Context, db: Db) -> dict:
+    """Согласие с правилами из Mini App. Номер телефона по-прежнему приходит только боту
+    собственным контактом гостя (requestContact) и проверяется там."""
+    guest = ctx.guest or await get_or_create_guest(db, ctx.club, ctx.user)
+    await accept_consent(db, guest)
+    await db.commit()
+    return {"registered": is_registered(guest), "has_consent": True}
 
 
 @router.get("/wheel")

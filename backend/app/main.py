@@ -2,7 +2,10 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
 
+from pathlib import Path
+
 from fastapi import Depends, FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,6 +63,10 @@ app = FastAPI(title="Club Loyalty Games", lifespan=lifespan)
 app.include_router(platform.router)  # /tg/platform — раньше /tg/{bot_id}
 app.include_router(telegram.router)
 app.include_router(miniapp.router)
+
+# Картинки оформления клубов (логотипы, баннеры). Наружу их пропускает веб-сервер.
+Path(get_settings().media_dir).mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=get_settings().media_dir), name="media")
 
 
 @app.get("/health")

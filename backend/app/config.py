@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     env: str = "dev"
     # Бот платформы: через него владелец подключает клубы без консоли.
     platform_bot_token: SecretStr | None = None
+    # Картинки оформления клубов (логотипы, баннеры); раздаются по /media/...
+    media_dir: str = str(Path(__file__).resolve().parents[1] / "media")
     # Только для разработки: токен тестового бота для команды connect-bot.
     test_bot_token: SecretStr | None = None
 

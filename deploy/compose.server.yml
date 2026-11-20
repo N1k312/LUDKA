@@ -43,6 +43,8 @@ services:
       # Папку стоит держать в OneDrive / Google Drive / на другом диске —
       # тогда копии базы переживут потерю этого компьютера.
       - ${BACKUP_DIR:-./backups}:/backups
+      # Картинки оформления клубов — тоже в бэкап.
+      - media:/media:ro
     entrypoint: ["sh", "/backup.sh"]
     configs:
       - source: backup_script

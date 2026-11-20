@@ -27,6 +27,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy import Enum as SAEnum
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 NAMING_CONVENTION = {
@@ -122,6 +123,9 @@ class Club(Base):
     )
     # Правила акции, которые гость видит в Mini App.
     rules_text: Mapped[str | None] = mapped_column(Text)
+    # Оформление клуба: палитра, надпись колеса, префикс кодов, тексты, картинки.
+    # См. app/services/branding.py; пусто — оформление по умолчанию.
+    branding: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = created_at_column()
 
 

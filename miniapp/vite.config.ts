@@ -18,6 +18,7 @@ export default defineConfig({
       "/api": API,
       "/tg": API,
       "/health": API,
+      "/media": API,
     },
   },
 });

@@ -3,7 +3,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -12,7 +12,11 @@ from app.models import (
     ClubStaff,
     GameConfig,
     GameType,
+    Guest,
+    Play,
+    PrizeCode,
     PrizeOption,
+    RedemptionLog,
     StaffRole,
     Subscription,
 )
@@ -105,3 +109,45 @@ async def club_summary(db: AsyncSession, club: Club) -> dict:
         "owner": owner,
         "admins": [s for s in staff if s.role == StaffRole.ADMIN],
     }
+
+
+# --- Сброс данных клуба ---------------------------------------------------------------------
+
+
+async def game_data_counts(db: AsyncSession, club: Club) -> dict[str, int]:
+    """Сколько игровых данных у клуба — показывается перед очисткой."""
+
+    async def count(model, *conditions) -> int:
+        return await db.scalar(select(func.count()).select_from(model).where(model.club_id == club.id, *conditions))
+
+    return {
+        "guests": await count(Guest),
+        "plays": await count(Play),
+        "codes": await count(PrizeCode),
+        "active_codes": await count(PrizeCode, PrizeCode.redeemed_at.is_(None),
+                                    PrizeCode.expires_at > func.now()),
+        "log": await count(RedemptionLog),
+    }
+
+
+async def wipe_game_data(db: AsyncSession, club: Club) -> dict[str, int]:
+    """Удаляет гостей, игры, промокоды и журнал проверок ТОЛЬКО этого клуба.
+
+    Бот, призы, сотрудники, подписка, оформление и правила остаются.
+    Порядок удаления — от зависимых таблиц к главным (промокоды → игры → гости).
+    """
+    counts = await game_data_counts(db, club)
+    for model in (RedemptionLog, PrizeCode, Play, Guest):
+        await db.execute(delete(model).where(model.club_id == club.id))
+    await db.flush()
+    return counts
+
+
+async def reset_guest_registration(db: AsyncSession, club: Club, telegram_id: int) -> bool:
+    """Снимает номер и согласие гостя клуба (игры и промокоды остаются). False — такого гостя нет."""
+    result = await db.execute(
+        update(Guest)
+        .where(Guest.club_id == club.id, Guest.telegram_id == telegram_id)
+        .values(phone=None, consent_at=None)
+    )
+    return result.rowcount > 0

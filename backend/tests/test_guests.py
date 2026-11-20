@@ -132,11 +132,17 @@ async def test_consent_completes_registration(session, bot_a):
     await bot_a.send(message_update("/start"))
     await bot_a.send(contact_update("77010000000", contact_user_id=GUEST_ID))
 
-    [welcome] = await bot_a.send(consent_update())
+    new_messages = await bot_a.send(consent_update())
 
     guest = await get_guest(session, bot_a.club_bot.club_id)
     assert guest.consent_at is not None
-    assert welcome.reply_markup.inline_keyboard[0][0].web_app is not None
+    # Сообщение с правилами превращается в приветствие — новых сообщений нет.
+    assert new_messages == []
+    [welcome] = bot_a.telegram.of(methods.EditMessageText)
+    assert "Добро пожаловать" in welcome.text
+    buttons = [b for row in welcome.reply_markup.inline_keyboard for b in row]
+    assert buttons[0].web_app is not None and buttons[1].web_app.url.endswith("&tab=prizes")
+    assert buttons[2].callback_data == "guest:rules"
     assert bot_a.telegram.of(methods.AnswerCallbackQuery)
 
 

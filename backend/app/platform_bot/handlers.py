@@ -34,11 +34,12 @@ from app.bots.admin import greet_new_staff
 from app.bots.registry import registry
 from app.bots.setup import BotSetupError, connect_bot
 from app.models import Club, ClubBot, Payment, PrizeOption, Subscription
-from app.services import clubs, subscription
+from app.services import branding, clubs, subscription
 from app.services.qr import start_link
 from app.services.staff import Person, Role, StaffError, assign_superadmin, is_platform_owner
 
 PICK_SUPERADMIN = 10
+PICK_RESET_GUEST = 11
 COOLDOWNS = [(60, "1 минута (тест)"), (24 * 3600, "1 день"), (7 * 24 * 3600, "7 дней")]
 EXTEND_DAYS = [30, 90, 365]
 # Правила и текст согласия должны поместиться в одно сообщение Telegram (4096 символов).
@@ -60,6 +61,12 @@ class PF(StatesGroup):
     rules_text = State()
     pay_amount = State()
     super_pick = State()
+    brand_hub = State()
+    brand_prefix = State()
+    brand_text = State()
+    brand_image = State()
+    reset_guest_pick = State()
+    wipe_confirm = State()
 
 
 class OwnerOnly(BaseFilter):
@@ -155,7 +162,8 @@ async def card(db: AsyncSession, club: Club) -> tuple[str, InlineKeyboardMarkup]
         [btn("🤖 Бот", "bot", c), btn("🎁 Призы", "prizes", c)],
         [btn("👑 Суперадмин", "super", c), btn("💳 Подписка", "sub", c)],
         [btn("📜 Правила", "rules", c), btn("🔲 QR для кассы", "qr", c)],
-        [btn("⏱ Лимит спинов", "limit", c), btn("⬅️ Клубы", "clubs")],
+        [btn("⏱ Лимит спинов", "limit", c), btn("🎨 Оформление", "brand", c)],
+        [btn("🧹 Сброс данных", "data", c), btn("⬅️ Клубы", "clubs")],
     )
     return "\n".join(lines), keyboard
 
@@ -580,6 +588,292 @@ async def limit_set(callback: CallbackQuery, callback_data: Nav, db: AsyncSessio
     club = await get_club(db, callback_data.club_id)
     await clubs.set_cooldown(db, club, callback_data.arg)
     await show_card(callback, db, club)
+
+
+# --- Оформление клуба ---------------------------------------------------------------------
+
+PALETTE_KEYS = list(branding.PALETTES)
+TEXT_KEYS = list(branding.TEXT_KINDS)
+IMAGE_TITLES = {"logo": "Логотип", "banner": "Баннер приветствия"}
+
+
+def brand_view(club: Club) -> tuple[str, InlineKeyboardMarkup]:
+    b = branding.resolved(club)
+    texts = branding.data(club).get("texts") or {}
+    lines = [
+        f"🎨 <b>Оформление</b> · {html.quote(club.name)}",
+        "",
+        f"Палитра: {branding.PALETTES[b['palette']]['title']}",
+        f"Надпись в центре колеса: {html.quote(b['hub_label'])}",
+        f"Префикс промокодов: {b['code_prefix']} (новые коды: <code>{b['code_prefix']}-XXXXXX</code>)",
+        f"Логотип: {'есть' if branding.image_path(club, 'logo') else 'нет'} · "
+        f"баннер: {'есть' if branding.image_path(club, 'banner') else 'нет'}",
+        "Тексты: " + ", ".join(f"{title.lower()} — {'свой' if texts.get(k) else 'стандартный'}"
+                               for k, title in branding.TEXT_KINDS.items()),
+        "",
+        "Гости увидят изменения при следующем открытии Mini App.",
+    ]
+    c = club.id
+    keyboard = kb(
+        [btn("🎨 Палитра", "brand_palettes", c), btn("🔤 Надпись колеса", "brand_hub", c)],
+        [btn("🏷 Префикс кодов", "brand_prefix", c), btn("✍️ Тексты", "brand_texts", c)],
+        [btn("🖼 Логотип", "brand_image", c, 0), btn("🌅 Баннер", "brand_image", c, 1)],
+        [btn("↩️ Сбросить", "brand_reset", c), btn("⬅️ К клубу", "club", c)],
+    )
+    return "\n".join(lines), keyboard
+
+
+async def show_brand(target: Message | CallbackQuery, club: Club, note: str = "") -> None:
+    text, markup = brand_view(club)
+    await show(target, f"{note}\n\n{text}" if note else text, markup)
+
+
+@router.callback_query(Nav.filter(F.action == "brand"))
+async def brand_menu(callback: CallbackQuery, callback_data: Nav, db: AsyncSession, state: FSMContext) -> None:
+    await state.clear()
+    await show_brand(callback, await get_club(db, callback_data.club_id))
+
+
+@router.callback_query(Nav.filter(F.action == "brand_palettes"))
+async def brand_palettes(callback: CallbackQuery, callback_data: Nav, db: AsyncSession) -> None:
+    club = await get_club(db, callback_data.club_id)
+    current = branding.resolved(club)["palette"]
+    rows = [[btn(f"{'✅ ' if key == current else ''}{p['title']}", "brand_palette", club.id, i)]
+            for i, (key, p) in enumerate(branding.PALETTES.items())]
+    rows.append([btn("⬅️ Оформление", "brand", club.id)])
+    await show(callback, "🎨 Выберите палитру колеса и кнопок Mini App:", kb(*rows))
+
+
+@router.callback_query(Nav.filter(F.action == "brand_palette"))
+async def brand_palette(callback: CallbackQuery, callback_data: Nav, db: AsyncSession) -> None:
+    if not 0 <= callback_data.arg < len(PALETTE_KEYS):
+        await callback.answer("Недопустимое значение", show_alert=True)
+        return
+    club = await get_club(db, callback_data.club_id)
+    branding.set_palette(club, PALETTE_KEYS[callback_data.arg])
+    await db.flush()
+    await show_brand(callback, club, "✅ Палитра сохранена.")
+
+
+@router.callback_query(Nav.filter(F.action == "brand_hub"))
+async def brand_hub(callback: CallbackQuery, callback_data: Nav, state: FSMContext) -> None:
+    await state.set_state(PF.brand_hub)
+    await state.update_data(club_id=callback_data.club_id)
+    await show(callback, f"🔤 Отправьте надпись для центра колеса — до {branding.HUB_LABEL_MAX} символов, "
+                         "например <code>CA</code> или <code>⚡</code>.",
+               kb([btn("⬅️ Оформление", "brand", callback_data.club_id)]))
+
+
+@router.callback_query(Nav.filter(F.action == "brand_prefix"))
+async def brand_prefix(callback: CallbackQuery, callback_data: Nav, state: FSMContext) -> None:
+    await state.set_state(PF.brand_prefix)
+    await state.update_data(club_id=callback_data.club_id)
+    await show(callback, "🏷 Отправьте префикс промокодов — 2–4 латинские буквы, например <code>CA</code>.\n\n"
+                         "Уже выданные коды не меняются и продолжают гаситься: при ручном вводе "
+                         "старого кода админ вводит его целиком, с прежним префиксом.",
+               kb([btn("⬅️ Оформление", "brand", callback_data.club_id)]))
+
+
+@router.callback_query(Nav.filter(F.action == "brand_texts"))
+async def brand_texts(callback: CallbackQuery, callback_data: Nav, db: AsyncSession) -> None:
+    club = await get_club(db, callback_data.club_id)
+    texts = branding.data(club).get("texts") or {}
+    lines = ["✍️ <b>Тексты</b>", ""] + [
+        f"<b>{title}:</b> {html.quote(texts[k]) if texts.get(k) else 'стандартный'}"
+        for k, title in branding.TEXT_KINDS.items()]
+    rows = [[btn(f"✍️ {title}", "brand_text", club.id, i)] for i, title in enumerate(branding.TEXT_KINDS.values())]
+    rows.append([btn("⬅️ Оформление", "brand", club.id)])
+    await show(callback, "\n".join(lines), kb(*rows))
+
+
+@router.callback_query(Nav.filter(F.action == "brand_text"))
+async def brand_text(callback: CallbackQuery, callback_data: Nav, state: FSMContext) -> None:
+    if not 0 <= callback_data.arg < len(TEXT_KEYS):
+        await callback.answer("Недопустимое значение", show_alert=True)
+        return
+    kind = TEXT_KEYS[callback_data.arg]
+    await state.set_state(PF.brand_text)
+    await state.update_data(club_id=callback_data.club_id, kind=kind)
+    hints = {
+        "welcome": "Его гость видит в боте после регистрации.",
+        "win": "Его гость видит в Mini App, когда выигрывает приз.",
+        "lose": "Его гость видит в Mini App, когда выпадает пустой сектор.",
+    }
+    await show(callback, f"✍️ {branding.TEXT_KINDS[kind]}: отправьте текст до {branding.TEXT_MAX} символов. "
+                         f"{hints[kind]}",
+               kb([btn("⬅️ Оформление", "brand", callback_data.club_id)]))
+
+
+@router.callback_query(Nav.filter(F.action == "brand_image"))
+async def brand_image(callback: CallbackQuery, callback_data: Nav, state: FSMContext) -> None:
+    kind = branding.IMAGE_KINDS[1 if callback_data.arg else 0]
+    await state.set_state(PF.brand_image)
+    await state.update_data(club_id=callback_data.club_id, kind=kind)
+    hint = ("Квадратный, лучше на прозрачном или однотонном фоне — он показывается в шапке Mini App."
+            if kind == "logo" else "Горизонтальный, примерно 16:9 — он приходит гостю вместе с приветствием.")
+    await show(callback, f"🖼 {IMAGE_TITLES[kind]}: отправьте картинку фото или файлом (JPG, PNG, до 5 МБ). {hint}",
+               kb([btn("⬅️ Оформление", "brand", callback_data.club_id)]))
+
+
+@router.callback_query(Nav.filter(F.action == "brand_reset"))
+async def brand_reset(callback: CallbackQuery, callback_data: Nav) -> None:
+    c = callback_data.club_id
+    await show(callback, "Сбросить оформление (палитру, надпись, тексты, логотип и баннер) к стандартному? "
+                         "Префикс промокодов останется.",
+               kb([btn("Да, сбросить", "brand_reset_yes", c), btn("Нет", "brand", c)]))
+
+
+@router.callback_query(Nav.filter(F.action == "brand_reset_yes"))
+async def brand_reset_yes(callback: CallbackQuery, callback_data: Nav, db: AsyncSession) -> None:
+    club = await get_club(db, callback_data.club_id)
+    branding.reset(club)
+    await db.flush()
+    await show_brand(callback, club, "✅ Оформление сброшено.")
+
+
+async def _apply(message: Message, db: AsyncSession, state: FSMContext, change) -> None:
+    """Общий шаг для текстовых настроек оформления: применить, сохранить, показать меню."""
+    club = await get_club(db, (await state.get_data())["club_id"])
+    try:
+        change(club)
+    except branding.BrandingError as e:
+        await message.answer(f"⛔ {html.quote(str(e))}. Отправьте ещё раз или /cancel.")
+        return
+    await db.flush()
+    await state.clear()
+    await show_brand(message, club, "✅ Сохранено.")
+
+
+@router.message(PF.brand_hub, F.text)
+async def brand_hub_text(message: Message, db: AsyncSession, state: FSMContext) -> None:
+    await _apply(message, db, state, lambda club: branding.set_hub_label(club, message.text))
+
+
+@router.message(PF.brand_prefix, F.text)
+async def brand_prefix_text(message: Message, db: AsyncSession, state: FSMContext) -> None:
+    await _apply(message, db, state, lambda club: branding.set_code_prefix(club, message.text))
+
+
+@router.message(PF.brand_text, F.text)
+async def brand_text_value(message: Message, db: AsyncSession, state: FSMContext) -> None:
+    kind = (await state.get_data())["kind"]
+    await _apply(message, db, state, lambda club: branding.set_text(club, kind, message.text))
+
+
+@router.message(PF.brand_image, F.photo | F.document)
+async def brand_image_file(message: Message, db: AsyncSession, state: FSMContext) -> None:
+    data = await state.get_data()
+    if message.photo:
+        file_id = message.photo[-1].file_id  # самый крупный размер
+    elif (message.document.mime_type or "").startswith("image/"):
+        if (message.document.file_size or 0) > branding.IMAGE_MAX_BYTES:
+            await message.answer("⛔ Картинка больше 5 МБ. Отправьте поменьше или /cancel.")
+            return
+        file_id = message.document.file_id
+    else:
+        await message.answer("⛔ Нужна картинка (JPG, PNG). Отправьте ещё раз или /cancel.")
+        return
+    content = await message.bot.download(file_id)
+    club = await get_club(db, data["club_id"])
+    try:
+        branding.set_image(club, data["kind"], content.read())
+    except branding.BrandingError as e:
+        await message.answer(f"⛔ {html.quote(str(e))}. Отправьте ещё раз или /cancel.")
+        return
+    await db.flush()
+    await state.clear()
+    await show_brand(message, club, f"✅ {IMAGE_TITLES[data['kind']]} сохранён.")
+
+
+# --- Сброс данных клуба -------------------------------------------------------------------
+
+
+@router.callback_query(Nav.filter(F.action == "data"))
+async def data_menu(callback: CallbackQuery, callback_data: Nav, db: AsyncSession, state: FSMContext) -> None:
+    await state.clear()
+    club = await get_club(db, callback_data.club_id)
+    n = await clubs.game_data_counts(db, club)
+    text = (
+        f"🧹 <b>Сброс данных</b> · {html.quote(club.name)}\n\n"
+        f"Гостей: {n['guests']} · игр: {n['plays']} · промокодов: {n['codes']} "
+        f"(активных: {n['active_codes']}) · записей журнала: {n['log']}\n\n"
+        "👤 <b>Сбросить регистрацию гостя</b> — снимает номер и согласие одного человека, "
+        "его игры и промокоды остаются. Удобно для проверки регистрации.\n\n"
+        "🗑 <b>Очистить игровые данные</b> — удаляет всех гостей, игры, промокоды и журнал проверок "
+        "этого клуба. Бот, призы, сотрудники, подписка, оформление и правила остаются."
+    )
+    await show(callback, text, kb(
+        [btn("👤 Сбросить регистрацию гостя", "reset_guest", club.id)],
+        [btn("🗑 Очистить игровые данные", "wipe", club.id)],
+        [btn("⬅️ К клубу", "club", club.id)],
+    ))
+
+
+@router.callback_query(Nav.filter(F.action == "reset_guest"))
+async def reset_guest_menu(callback: CallbackQuery, callback_data: Nav, db: AsyncSession, state: FSMContext) -> None:
+    club = await get_club(db, callback_data.club_id)
+    await state.set_state(PF.reset_guest_pick)
+    await state.update_data(club_id=club.id)
+    await callback.answer()
+    await callback.message.answer(
+        f"👤 Чью регистрацию в клубе «{html.quote(club.name)}» сбросить? "
+        "Нажмите кнопку внизу и выберите человека — можно и себя.",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="👤 Выбрать гостя", request_users=KeyboardButtonRequestUsers(
+                request_id=PICK_RESET_GUEST, user_is_bot=False, max_quantity=1, request_name=True))],
+                [KeyboardButton(text="/cancel")]],
+            resize_keyboard=True, one_time_keyboard=True,
+        ),
+    )
+
+
+@router.message(PF.reset_guest_pick, F.users_shared)
+async def reset_guest_picked(message: Message, db: AsyncSession, state: FSMContext) -> None:
+    club = await get_club(db, (await state.get_data())["club_id"])
+    user = message.users_shared.users[0]
+    await state.clear()
+    if await clubs.reset_guest_registration(db, club, user.user_id):
+        text = (f"✅ Регистрация {html.quote(user.first_name or str(user.user_id))} сброшена: "
+                "при следующем входе он снова поделится номером и примет правила. Игры и промокоды сохранены.")
+    else:
+        text = f"Этот человек ещё не гость клуба «{html.quote(club.name)}» — сбрасывать нечего."
+    await message.answer(text, reply_markup=ReplyKeyboardRemove())
+    await show_card(message, db, club)
+
+
+@router.callback_query(Nav.filter(F.action == "wipe"))
+async def wipe_menu(callback: CallbackQuery, callback_data: Nav, db: AsyncSession, state: FSMContext) -> None:
+    club = await get_club(db, callback_data.club_id)
+    n = await clubs.game_data_counts(db, club)
+    await state.set_state(PF.wipe_confirm)
+    await state.update_data(club_id=club.id)
+    warning = (f"\n⚠️ Из них {n['active_codes']} активных промокодов — гости не смогут их получить."
+               if n["active_codes"] else "")
+    await show(
+        callback,
+        f"🗑 <b>Очистка игровых данных</b> · {html.quote(club.name)}\n\n"
+        f"Будет удалено: гостей — {n['guests']}, игр — {n['plays']}, промокодов — {n['codes']}, "
+        f"записей журнала — {n['log']}.{warning}\n\n"
+        "Это <b>нельзя отменить</b> из бота — восстановить можно только из ежедневного бэкапа.\n\n"
+        f"Чтобы подтвердить, отправьте название клуба: <code>{html.quote(club.name)}</code>",
+        back(club.id),
+    )
+
+
+@router.message(PF.wipe_confirm, F.text)
+async def wipe_confirm(message: Message, db: AsyncSession, state: FSMContext) -> None:
+    club = await get_club(db, (await state.get_data())["club_id"])
+    await state.clear()
+    if message.text.strip().casefold() != club.name.strip().casefold():
+        await message.answer("Название не совпало — ничего не удалено.")
+        await show_card(message, db, club)
+        return
+    n = await clubs.wipe_game_data(db, club)
+    await message.answer(
+        f"✅ Игровые данные клуба «{html.quote(club.name)}» очищены: гостей — {n['guests']}, "
+        f"игр — {n['plays']}, промокодов — {n['codes']}, записей журнала — {n['log']}."
+    )
+    await show_card(message, db, club)
 
 
 # --- Ввод не того типа в состоянии ------------------------------------------------------

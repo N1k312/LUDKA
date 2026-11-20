@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import PrizeCode
 
-PREFIX = "GG-"
+DEFAULT_PREFIX = "GG"
+PREFIX = f"{DEFAULT_PREFIX}-"
 ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 LENGTH = 6
 MAX_ATTEMPTS = 10
@@ -21,17 +22,17 @@ class CodeStatus(StrEnum):
     EXPIRED = "expired"
 
 
-def generate_code() -> str:
-    return PREFIX + "".join(secrets.choice(ALPHABET) for _ in range(LENGTH))
+def generate_code(prefix: str = DEFAULT_PREFIX) -> str:
+    return f"{prefix}-" + "".join(secrets.choice(ALPHABET) for _ in range(LENGTH))
 
 
-async def new_unique_code(db: AsyncSession) -> str:
+async def new_unique_code(db: AsyncSession, prefix: str = DEFAULT_PREFIX) -> str:
     """31^6 ≈ 887 млн вариантов: совпадение маловероятно, но проверяем.
 
     Первичный ключ code всё равно защищает от дубля при гонке.
     """
     for _ in range(MAX_ATTEMPTS):
-        code = generate_code()
+        code = generate_code(prefix)
         if await db.scalar(select(PrizeCode.code).where(PrizeCode.code == code)) is None:
             return code
     raise RuntimeError("Не удалось сгенерировать уникальный промокод")

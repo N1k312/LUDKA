@@ -1,8 +1,10 @@
-// «Мои призы»: промокоды со статусами; у активного — QR для сканера администратора.
+// «Мои призы»: активные сверху; по нажатию на активный — QR на весь экран для администратора.
 
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import type { Prize, PrizeStatus } from "./api";
+import { expiresIn, formatDate, formatDateTime } from "./format";
+import { haptic } from "./telegram";
 
 const STATUS: Record<PrizeStatus, string> = {
   active: "Активен",
@@ -10,61 +12,75 @@ const STATUS: Record<PrizeStatus, string> = {
   expired: "Истёк",
 };
 
-export function PrizeList({
-  prizes,
-  timeZone,
-  formatDate,
-  formatDateTime,
-}: {
-  prizes: Prize[];
-  timeZone: string;
-  formatDate: (iso: string, tz: string) => string;
-  formatDateTime: (iso: string, tz: string) => string;
-}) {
-  const [open, setOpen] = useState<string | null>(prizes.find((p) => p.status === "active")?.code ?? null);
+/** Активные — по сроку (что сгорит раньше — выше), остальные — от новых к старым. */
+export function sortPrizes(prizes: Prize[]): Prize[] {
+  const active = prizes.filter((p) => p.status === "active")
+    .sort((a, b) => a.expires_at.localeCompare(b.expires_at));
+  const rest = prizes.filter((p) => p.status !== "active")
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  return [...active, ...rest];
+}
+
+export function PrizeList({ prizes, timeZone }: { prizes: Prize[]; timeZone: string }) {
+  const [shown, setShown] = useState<Prize | null>(null);
 
   return (
-    <ul className="prizes">
-      {prizes.map((p) => {
-        const isOpen = open === p.code && p.status === "active";
-        return (
-          <li key={p.code} className={`prize prize-${p.status}`}>
-            <button
-              className="prize-head"
-              onClick={() => setOpen(isOpen ? null : p.code)}
-              disabled={p.status !== "active"}
-            >
-              <span className="prize-emoji">{p.emoji ?? "🎁"}</span>
-              <span className="prize-main">
-                <span className="prize-title">{p.title}</span>
-                <span className="prize-code">{p.code}</span>
-              </span>
-              <span className={`status status-${p.status}`}>{STATUS[p.status]}</span>
-            </button>
-            <div className="prize-meta">
-              {p.status === "redeemed" && p.redeemed_at
-                ? `Получен ${formatDateTime(p.redeemed_at, timeZone)}`
-                : p.status === "expired"
-                  ? `Истёк ${formatDate(p.expires_at, timeZone)}`
-                  : `Действует до ${formatDate(p.expires_at, timeZone)}`}
-            </div>
-            {isOpen && (
-              <div className="prize-qr">
-                <QrImage value={p.code} />
-                <p className="muted">Покажите QR или промокод администратору</p>
+    <>
+      <ul className="prizes">
+        {sortPrizes(prizes).map((p) => {
+          const soon = p.status === "active" && new Date(p.expires_at).getTime() - Date.now() < 3 * 86400_000;
+          return (
+            <li key={p.code} className={`prize prize-${p.status}`}>
+              <button
+                className="prize-head"
+                onClick={() => {
+                  haptic.impact("light");
+                  setShown(p);
+                }}
+                disabled={p.status !== "active"}
+              >
+                <span className="prize-emoji">{p.emoji ?? "🎁"}</span>
+                <span className="prize-main">
+                  <span className="prize-title">{p.title}</span>
+                  <span className="prize-code">{p.code}</span>
+                </span>
+                <span className={`status status-${p.status}`}>{STATUS[p.status]}</span>
+              </button>
+              <div className={`prize-meta ${soon ? "prize-soon" : ""}`}>
+                {p.status === "redeemed" && p.redeemed_at
+                  ? `Получен ${formatDateTime(p.redeemed_at, timeZone)}`
+                  : p.status === "expired"
+                    ? `Истёк ${formatDate(p.expires_at, timeZone)}`
+                    : `${expiresIn(p.expires_at)} · нажмите, чтобы показать QR`}
               </div>
-            )}
-          </li>
-        );
-      })}
-    </ul>
+            </li>
+          );
+        })}
+      </ul>
+      {shown && <QrModal prize={shown} onClose={() => setShown(null)} />}
+    </>
   );
 }
 
-function QrImage({ value }: { value: string }) {
+/** Промокод для администратора: крупный QR и код на весь экран. */
+export function QrModal({ prize, onClose }: { prize: Pick<Prize, "code" | "title" | "emoji">; onClose: () => void }) {
+  return (
+    <div className="modal-backdrop qr-backdrop" onClick={onClose}>
+      <div className="qr-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="qr-title">{prize.emoji ?? "🎁"} {prize.title}</div>
+        <QrImage value={prize.code} size={280} />
+        <div className="code qr-code">{prize.code}</div>
+        <p className="muted">Покажите экран администратору. Если сканер не видит код — прибавьте яркость.</p>
+        <button className="button" onClick={onClose}>Готово</button>
+      </div>
+    </div>
+  );
+}
+
+function QrImage({ value, size }: { value: string; size: number }) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
-    QRCode.toDataURL(value, { margin: 1, width: 220, errorCorrectionLevel: "M" }).then(setSrc, () => setSrc(null));
-  }, [value]);
-  return src ? <img className="qr" src={src} alt={`QR-код ${value}`} width={220} height={220} /> : null;
+    QRCode.toDataURL(value, { margin: 1, width: size * 2, errorCorrectionLevel: "M" }).then(setSrc, () => setSrc(null));
+  }, [value, size]);
+  return src ? <img className="qr" src={src} alt={`QR-код ${value}`} width={size} height={size} /> : null;
 }

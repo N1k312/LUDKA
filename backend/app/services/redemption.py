@@ -23,24 +23,28 @@ from app.models import (
     RedemptionLog,
     RedemptionResult,
 )
-from app.services.codes import ALPHABET, LENGTH, PREFIX
+from app.services import branding
+from app.services.codes import ALPHABET, DEFAULT_PREFIX, LENGTH
 
 FAILED_LIMIT = 10
 FAILED_WINDOW = timedelta(minutes=15)
 
 # GG-7K3M9Q, gg 7k3m9q, 7K3M9Q — с дефисом, пробелом или без префикса.
-CODE_PATTERN = re.compile(r"^\s*(?:GG[\s-]?)?([A-Z0-9]{%d})\s*$" % LENGTH, re.IGNORECASE)
+CODE_PATTERN = re.compile(r"^\s*(?:([A-Z]{2,4})[\s-]?)?([A-Z0-9]{%d})\s*$" % LENGTH, re.IGNORECASE)
 
 
-def normalize_code(raw: str) -> str | None:
-    """Приводит ввод админа к виду GG-XXXXXX; None — если это не похоже на промокод."""
+def normalize_code(raw: str, prefix: str = DEFAULT_PREFIX) -> str | None:
+    """Приводит ввод админа к виду PREFIX-XXXXXX; None — если это не похоже на промокод.
+
+    Префикс можно не вводить — тогда подставляется префикс клуба (по умолчанию GG).
+    """
     match = CODE_PATTERN.match(raw or "")
     if not match:
         return None
-    body = match.group(1).upper()
+    typed_prefix, body = match.group(1), match.group(2).upper()
     if set(body) - set(ALPHABET):
         return None
-    return PREFIX + body
+    return f"{(typed_prefix or prefix).upper()}-{body}"
 
 
 @dataclass
@@ -98,7 +102,7 @@ async def _load(db: AsyncSession, club: Club, code: str) -> Outcome:
 
 
 async def check_code(db: AsyncSession, club: Club, admin_id: int, raw: str) -> Outcome:
-    code = normalize_code(raw) or raw.strip().upper()[:32]
+    code = normalize_code(raw, branding.code_prefix(club)) or raw.strip().upper()[:32]
     if await _is_rate_limited(db, club, admin_id):
         await _log(db, club, admin_id, code, RedemptionAction.CHECK, RedemptionResult.RATE_LIMITED)
         return Outcome(RedemptionResult.RATE_LIMITED, code)
@@ -108,7 +112,7 @@ async def check_code(db: AsyncSession, club: Club, admin_id: int, raw: str) -> O
 
 
 async def redeem_code(db: AsyncSession, club: Club, admin_id: int, raw: str) -> Outcome:
-    code = normalize_code(raw) or raw.strip().upper()[:32]
+    code = normalize_code(raw, branding.code_prefix(club)) or raw.strip().upper()[:32]
     if await _is_rate_limited(db, club, admin_id):
         await _log(db, club, admin_id, code, RedemptionAction.REDEEM, RedemptionResult.RATE_LIMITED)
         return Outcome(RedemptionResult.RATE_LIMITED, code)

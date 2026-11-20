@@ -2,13 +2,28 @@
 // а X-Bot-Id говорит серверу, через какого бота открыт Mini App (?bot= в адресе).
 
 import { tg } from "./telegram";
-import { mockFetch } from "./mock";
+import { mockFetch, mockShareContact } from "./mock";
+
+export interface Branding {
+  palette: string;
+  accent: string;
+  wheel: string[];
+  empty: string;
+  rim: string;
+  hub_label: string;
+  code_prefix: string;
+  logo_url: string | null;
+  texts: { win: string | null; lose: string | null };
+  /** false — клуб не настраивал оформление: цвета кнопок берутся из темы Telegram. */
+  customized: boolean;
+}
 
 export interface Me {
   club: { name: string; timezone: string };
-  guest: { first_name: string; registered: boolean };
+  guest: { first_name: string; registered: boolean; has_phone: boolean; has_consent: boolean };
   available: boolean;
   wheel: { enabled: boolean; cooldown_seconds: number | null; next_spin_at: string | null };
+  branding: Branding;
 }
 
 export interface Sector {
@@ -87,4 +102,20 @@ export const api = {
   spin: () => request<SpinResult>("POST", "/spin"),
   prizes: () => request<{ prizes: Prize[] }>("GET", "/prizes").then((r) => r.prizes),
   rules: () => request<{ club: string; rules: string | null }>("GET", "/rules"),
+  consent: () => request<{ registered: boolean }>("POST", "/consent"),
 };
+
+/**
+ * Попросить номер телефона: Telegram показывает системное окно и отправляет
+ * собственный контакт гостя боту — бот проверяет его и сохраняет номер.
+ * Возвращает false, если гость отказался или клиент Telegram слишком старый.
+ */
+export function shareContact(): Promise<boolean> {
+  if (isMock) return mockShareContact();
+  return new Promise((resolve) => {
+    if (!tg?.requestContact || !tg.isVersionAtLeast("6.9")) return resolve(false);
+    tg.requestContact((shared) => resolve(shared));
+  });
+}
+
+export const canShareContact = () => isMock || Boolean(tg?.requestContact && tg.isVersionAtLeast("6.9"));

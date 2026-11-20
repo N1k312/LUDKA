@@ -22,7 +22,7 @@ from app.models import (
     PrizeOption,
     Subscription,
 )
-from app.services import subscription
+from app.services import branding, subscription
 from app.services.codes import new_unique_code
 from app.services.guests import is_registered
 
@@ -137,7 +137,7 @@ async def spin(db: AsyncSession, club: Club, guest_id: int) -> SpinResult:
     code = None
     if not option.is_empty:
         code = PrizeCode(
-            code=await new_unique_code(db),
+            code=await new_unique_code(db, branding.code_prefix(club)),
             club_id=club.id,
             guest_id=guest.id,
             prize_option_id=option.id,

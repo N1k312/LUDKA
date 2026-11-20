@@ -2,15 +2,20 @@
 
 Регистрация гостя перед первой игрой:
   /start → «Поделиться номером» (только свой контакт) → правила и согласие → «Играть».
+Регистрацию можно пройти и прямо в Mini App (согласие через API, номер — requestContact):
+номер всё равно приходит сюда обычным контактом и проверяется здесь же.
+Если у клуба есть баннер (оформление), приветствия приходят картинкой с подписью.
 """
 
 import re
 from html import unescape
 
 from aiogram import F, Router, html
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     CallbackQuery,
+    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
@@ -23,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models import Club, Guest
+from app.services import branding
 from app.services.guests import (
     PhoneTakenError,
     accept_consent,
@@ -32,6 +38,7 @@ from app.services.guests import (
 )
 
 CONSENT_CALLBACK = "consent:accept"
+RULES_CALLBACK = "guest:rules"
 
 router = Router(name="guest")
 # Mini App и регистрация работают только в личном чате с ботом.
@@ -42,10 +49,13 @@ router.message.filter(F.chat.type == "private")
 
 
 def play_keyboard(bot_id: int) -> InlineKeyboardMarkup:
+    """«Крутить» — Mini App на колесе, «Мои призы» — сразу на вкладке призов, «Правила» — в чат."""
     url = get_settings().webapp_url_for(bot_id)
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="🎡 Играть", web_app=WebAppInfo(url=url))]]
-    )
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎡 Крутить колесо", web_app=WebAppInfo(url=url))],
+        [InlineKeyboardButton(text="🎁 Мои призы", web_app=WebAppInfo(url=f"{url}&tab=prizes")),
+         InlineKeyboardButton(text="📜 Правила", callback_data=RULES_CALLBACK)],
+    ])
 
 
 def contact_keyboard() -> ReplyKeyboardMarkup:
@@ -91,13 +101,32 @@ def fits(text: str) -> bool:
     return len(unescape(re.sub(r"<[^>]+>", "", text))) <= TELEGRAM_TEXT_LIMIT
 
 
+def welcome_text(club: Club) -> str:
+    custom = branding.text(club, "welcome")
+    body = html.quote(custom) if custom else (
+        "Крутите колесо раз в неделю. Выигранный приз получите у администратора "
+        "по промокоду — он появится в разделе «Мои призы»."
+    )
+    return f"Добро пожаловать в {club_title(club)}! 🎉\n\n{body}"
+
+
+async def send(message: Message, club: Club, text: str, reply_markup=None) -> None:
+    """Текст или, если у клуба есть баннер, картинка с подписью (подпись — до 1024 символов)."""
+    banner = branding.image_path(club, "banner")
+    if banner is not None and banner.exists() and fits(text) and len(text) <= 1000:
+        await message.answer_photo(FSInputFile(banner), caption=text, reply_markup=reply_markup)
+    else:
+        await message.answer(text, reply_markup=reply_markup)
+
+
 # --- Шаги регистрации ---------------------------------------------------------
 
 
 async def continue_registration(message: Message, club: Club, guest: Guest) -> None:
     """Показывает гостю следующий шаг: номер → согласие → игра."""
     if guest.phone is None:
-        await message.answer(
+        await send(
+            message, club,
             f"Привет! Это бот клуба {club_title(club)}.\n\n"
             "Раз в неделю здесь можно бесплатно крутить колесо фортуны и выигрывать "
             "бонусы клуба: часы игры, скидки, напитки.\n\n"
@@ -114,12 +143,7 @@ async def continue_registration(message: Message, club: Club, guest: Guest) -> N
             await message.answer(rules_text(club))
             await message.answer(consent_note(club), reply_markup=consent_keyboard())
     else:
-        await message.answer(
-            f"Добро пожаловать в {club_title(club)}! 🎉\n\n"
-            "Крутите колесо раз в неделю. Выигранный приз получите у администратора "
-            "по промокоду — он появится в разделе «Мои призы».",
-            reply_markup=play_keyboard(message.bot.id),
-        )
+        await send(message, club, welcome_text(club), reply_markup=play_keyboard(message.bot.id))
 
 
 @router.message(CommandStart())
@@ -165,9 +189,19 @@ async def consent(callback: CallbackQuery, club: Club, db: AsyncSession) -> None
         return
 
     await accept_consent(db, guest)
+    await db.commit()  # согласие сохраняется, даже если Telegram не примет правку сообщения
     await callback.answer("Готово!")
-    await callback.message.edit_reply_markup(reply_markup=None)
-    await continue_registration(callback.message, club, guest)
+    # Сообщение с согласием превращается в приветствие (одно сообщение вместо двух).
+    # С баннером так нельзя — картинку в текстовое сообщение не вставить, поэтому шлём новое.
+    has_banner = branding.image_path(club, "banner") is not None
+    text = "✅ Правила приняты." if has_banner else welcome_text(club)
+    markup = None if has_banner else play_keyboard(callback.bot.id)
+    try:
+        await callback.message.edit_text(text, reply_markup=markup)
+    except TelegramBadRequest:
+        has_banner = True  # не смогли отредактировать — пришлём приветствие отдельно
+    if has_banner:
+        await send(callback.message, club, welcome_text(club), reply_markup=play_keyboard(callback.bot.id))
 
 
 @router.message(Command("rules"))
@@ -175,10 +209,17 @@ async def rules(message: Message, club: Club) -> None:
     await message.answer(rules_text(club))
 
 
+@router.callback_query(F.data == RULES_CALLBACK)
+async def rules_button(callback: CallbackQuery, club: Club) -> None:
+    await callback.answer()
+    await callback.message.answer(rules_text(club))
+
+
 @router.message()
 async def fallback(message: Message, club: Club, db: AsyncSession) -> None:
     guest = await get_or_create_guest(db, club, message.from_user)
     if is_registered(guest):
-        await message.answer("Нажмите «Играть», чтобы открыть колесо 🎡", reply_markup=play_keyboard(message.bot.id))
+        await message.answer("Нажмите «Крутить колесо», чтобы открыть игру 🎡",
+                             reply_markup=play_keyboard(message.bot.id))
     else:
         await continue_registration(message, club, guest)

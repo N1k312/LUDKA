@@ -1,14 +1,20 @@
 // Колесо фортуны на SVG. Результат приходит с сервера, колесо лишь докручивается до него.
+// Цвета и надпись в центре — из оформления клуба. В покое колесо медленно вращается
+// (кроме режима «уменьшить движение»).
 
-import { forwardRef, useImperativeHandle, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import type { Sector } from "./api";
-import { haptic } from "./telegram";
+import { tick as soundTick } from "./sound";
+import { haptic, reducedMotion } from "./telegram";
 
-const COLORS = ["#7c5cff", "#ff5c8a", "#ffb03b", "#2ec4b6", "#4d8cff", "#ff7a45", "#a35cff", "#22c55e"];
-const EMPTY_COLOR = "#5b6475";
 const RADIUS = 100;
-const SPIN_MS = 5200;
-const EXTRA_TURNS = 6;
+const IDLE_DEG_PER_SEC = 4;
+
+export interface WheelColors {
+  wheel: string[];
+  empty: string;
+  rim: string;
+}
 
 export interface WheelHandle {
   /** Докрутить колесо до сектора; промис завершается, когда колесо остановилось. */
@@ -46,10 +52,39 @@ function wrap(title: string, max = 11): string[] {
 // Плавное замедление к концу (как у настоящего колеса).
 const easeOut = (t: number) => 1 - Math.pow(1 - t, 4);
 
-export const Wheel = forwardRef<WheelHandle, { sectors: Sector[] }>(function Wheel({ sectors }, ref) {
+interface Props {
+  sectors: Sector[];
+  colors: WheelColors;
+  hubLabel: string;
+  /** Медленное вращение в покое. */
+  idle?: boolean;
+}
+
+export const Wheel = forwardRef<WheelHandle, Props>(function Wheel({ sectors, colors, hubLabel, idle = true }, ref) {
   const groupRef = useRef<SVGGElement>(null);
   const rotation = useRef(0);
+  const spinning = useRef(false);
   const step = 360 / Math.max(sectors.length, 1);
+
+  const apply = (rot: number) => {
+    rotation.current = rot;
+    groupRef.current?.setAttribute("transform", `rotate(${rot})`);
+  };
+
+  // Вращение в покое.
+  useEffect(() => {
+    if (!idle || reducedMotion()) return;
+    let frame = 0;
+    let last = performance.now();
+    const loop = (now: number) => {
+      const dt = (now - last) / 1000;
+      last = now;
+      if (!spinning.current) apply(rotation.current + IDLE_DEG_PER_SEC * Math.min(dt, 0.1));
+      frame = requestAnimationFrame(loop);
+    };
+    frame = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(frame);
+  }, [idle]);
 
   const sectorUnderPointer = (rot: number) => {
     const angle = (((-rot % 360) + 360) % 360 + step / 2) % 360;
@@ -58,6 +93,10 @@ export const Wheel = forwardRef<WheelHandle, { sectors: Sector[] }>(function Whe
 
   useImperativeHandle(ref, () => ({
     spinTo(sectorId: number) {
+      spinning.current = true;
+      const calm = reducedMotion();
+      const duration = calm ? 1500 : 5200;
+      const turns = calm ? 1 : 6;
       const index = sectors.findIndex((s) => s.id === sectorId);
       const target = index < 0 ? 0 : index;
       // Небольшое случайное смещение внутри сектора — только для вида, приз уже выбран сервером.
@@ -65,23 +104,26 @@ export const Wheel = forwardRef<WheelHandle, { sectors: Sector[] }>(function Whe
       const start = rotation.current;
       const desired = (((-(target * step + jitter)) % 360) + 360) % 360;
       const current = ((start % 360) + 360) % 360;
-      const end = start + EXTRA_TURNS * 360 + ((desired - current + 360) % 360);
+      const end = start + turns * 360 + ((desired - current + 360) % 360);
 
       return new Promise<void>((resolve) => {
         const t0 = performance.now();
         let lastSector = sectorUnderPointer(start);
         const frame = (now: number) => {
-          const t = Math.min(1, (now - t0) / SPIN_MS);
+          const t = Math.min(1, (now - t0) / duration);
           const rot = start + (end - start) * easeOut(t);
-          rotation.current = rot;
-          groupRef.current?.setAttribute("transform", `rotate(${rot})`);
+          apply(rot);
           const s = sectorUnderPointer(rot);
           if (s !== lastSector) {
             lastSector = s;
             haptic.tick();
+            soundTick();
           }
           if (t < 1) requestAnimationFrame(frame);
-          else resolve();
+          else {
+            spinning.current = false;
+            resolve();
+          }
         };
         requestAnimationFrame(frame);
       });
@@ -89,18 +131,14 @@ export const Wheel = forwardRef<WheelHandle, { sectors: Sector[] }>(function Whe
   }));
 
   let colorIndex = 0;
+  const hubFont = hubLabel.length <= 2 ? 12 : 9;
   return (
     <svg className="wheel" viewBox="-112 -118 224 230" role="img" aria-label="Колесо фортуны">
-      <defs>
-        <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-          <feDropShadow dx="0" dy="4" stdDeviation="5" floodOpacity="0.35" />
-        </filter>
-      </defs>
-      <circle r={RADIUS + 8} className="wheel-rim" filter="url(#shadow)" />
+      <circle r={RADIUS + 8} fill={colors.rim} />
       <g ref={groupRef}>
         {sectors.map((s, i) => {
           const center = i * step;
-          const fill = s.is_empty ? EMPTY_COLOR : COLORS[colorIndex++ % COLORS.length];
+          const fill = s.is_empty ? colors.empty : colors.wheel[colorIndex++ % colors.wheel.length];
           const lines = wrap(s.title);
           return (
             <g key={s.id}>
@@ -121,8 +159,10 @@ export const Wheel = forwardRef<WheelHandle, { sectors: Sector[] }>(function Whe
         const [x, y] = point(i * step + step / 2, RADIUS + 4);
         return <circle key={i} cx={x} cy={y} r={2} className="wheel-bulb" />;
       })}
-      <circle r={16} className="wheel-hub" />
-      <text y={5} className="wheel-hub-text">GG</text>
+      <circle r={16} className="wheel-hub" stroke={colors.rim} />
+      <text y={hubFont / 2.6} className="wheel-hub-text" fill={colors.rim} style={{ fontSize: hubFont }}>
+        {hubLabel}
+      </text>
       <path d="M-10 -116 L10 -116 L0 -94 Z" className="wheel-pointer" />
     </svg>
   );

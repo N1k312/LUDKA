@@ -31,6 +31,7 @@ from app.bots.notify import local_datetime
 from app.bots.setup import reset_commands, set_staff_commands
 from app.config import get_settings
 from app.models import Club, ClubStaff, RedemptionResult, StaffRole
+from app.services import stats
 from app.services.redemption import FAILED_WINDOW, Outcome, check_code, normalize_code, redeem_code
 from app.services.staff import (
     ROLE_TITLES,
@@ -41,6 +42,7 @@ from app.services.staff import (
     assign_superadmin,
     can_assign_superadmin,
     can_manage_admins,
+    display_name,
     list_staff,
     remove_staff,
     role_in_club,
@@ -50,6 +52,8 @@ REDEEM_PREFIX = "redeem:"
 SCAN_BUTTON = "📷 Сканировать QR"
 ENTER_BUTTON = "⌨️ Ввести код"
 STAFF_BUTTON = "👥 Сотрудники"
+TODAY_BUTTON = "📋 Сегодня"
+NEXT_CALLBACK = "admin:next"
 ADD_ADMIN_BUTTON = "➕ Добавить админа"
 SUPERADMIN_BUTTON = "👑 Назначить суперадмина"
 REMOVE_PREFIX = "staff:rm:"
@@ -88,7 +92,8 @@ def _pick_user(text: str, request_id: int) -> KeyboardButton:
 def admin_keyboard(bot_id: int, role: Role) -> ReplyKeyboardMarkup:
     scan_url = f"{get_settings().webapp_url_for(bot_id)}&scan=1"
     rows = [[KeyboardButton(text=SCAN_BUTTON, web_app=WebAppInfo(url=scan_url)),
-             KeyboardButton(text=ENTER_BUTTON)]]
+             KeyboardButton(text=ENTER_BUTTON)],
+            [KeyboardButton(text=TODAY_BUTTON)]]
     if can_manage_admins(role):
         rows.append([_pick_user(ADD_ADMIN_BUTTON, PICK_ADMIN), KeyboardButton(text=STAFF_BUTTON)])
     if can_assign_superadmin(role):
@@ -100,7 +105,10 @@ def mask_phone(phone: str | None) -> str:
     return f"…{phone[-4:]}" if phone else "не указан"
 
 
-def describe(outcome: Outcome, club: Club, admin_id: int) -> tuple[str, InlineKeyboardMarkup | None]:
+def describe(
+    outcome: Outcome, club: Club, admin_id: int, redeemer: str | None = None
+) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Ответ на проверку или погашение. redeemer — имя погасившего (для «уже погашен»)."""
     code = html.code(html.quote(outcome.code))
     if outcome.result == RedemptionResult.RATE_LIMITED:
         minutes = int(FAILED_WINDOW.total_seconds() // 60)
@@ -126,9 +134,12 @@ def describe(outcome: Outcome, club: Club, admin_id: int) -> tuple[str, InlineKe
         ]])
         return (f"🟢 Промокод {code} действителен\n\n{details}", keyboard)
     if outcome.result == RedemptionResult.REDEEMED:
-        return (f"✅ Промокод {code} погашен. Выдайте приз гостю.\n\n{details}", None)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="➡️ Следующий промокод", callback_data=NEXT_CALLBACK)
+        ]])
+        return (f"✅ Промокод {code} погашен. Выдайте приз гостю.\n\n{details}", keyboard)
     if outcome.result == RedemptionResult.ALREADY_REDEEMED:
-        by = "вами" if prize.redeemed_by == admin_id else "другим администратором"
+        by = "вами" if prize.redeemed_by == admin_id else html.quote(redeemer or "другим сотрудником")
         return (
             f"⚠️ Промокод {code} уже погашен {local_datetime(prize.redeemed_at, club)} {by}\n\n{details}",
             None,
@@ -170,9 +181,15 @@ async def ask_code(message: Message) -> None:
     await message.answer("Отправьте промокод сообщением, например GG-7K3M9Q.")
 
 
+async def redeemer_name(db: AsyncSession, club: Club, outcome: Outcome) -> str | None:
+    if outcome.result != RedemptionResult.ALREADY_REDEEMED:
+        return None
+    return await display_name(db, club, outcome.prize.redeemed_by)
+
+
 async def _check_and_reply(message: Message, club: Club, db: AsyncSession, raw: str) -> None:
     outcome = await check_code(db, club, message.from_user.id, raw)
-    text, keyboard = describe(outcome, club, message.from_user.id)
+    text, keyboard = describe(outcome, club, message.from_user.id, await redeemer_name(db, club, outcome))
     await message.answer(text, reply_markup=keyboard)
 
 
@@ -193,14 +210,43 @@ async def redeem(callback: CallbackQuery, club: Club, db: AsyncSession) -> None:
     # Сначала фиксируем погашение и журнал, потом говорим с Telegram: если ответ
     # не дойдёт (например, «query is too old»), погашение всё равно останется в базе.
     await db.commit()
-    text, _ = describe(outcome, club, callback.from_user.id)
+    text, keyboard = describe(outcome, club, callback.from_user.id, await redeemer_name(db, club, outcome))
     redeemed = outcome.result == RedemptionResult.REDEEMED
     with suppress(TelegramAPIError):
-        await callback.message.edit_text(text, reply_markup=None)
+        await callback.message.edit_text(text, reply_markup=keyboard)
     with suppress(TelegramAPIError):
         await callback.answer("Погашено" if redeemed else "Не удалось погасить")
     if redeemed:
         await notify_guest_redeemed(callback.bot, outcome, club)
+
+
+@router.callback_query(F.data == NEXT_CALLBACK)
+async def next_code(callback: CallbackQuery, role: Role) -> None:
+    await callback.answer()
+    await callback.message.answer(
+        "Отправьте следующий промокод сообщением или нажмите «📷 Сканировать QR».",
+        reply_markup=admin_keyboard(callback.bot.id, role),
+    )
+
+
+@router.message(F.text == TODAY_BUTTON)
+async def today_summary(message: Message, club: Club, db: AsyncSession) -> None:
+    s = await stats.today(db, club)
+    lines = [
+        f"📋 <b>Сегодня</b> в {html.quote(club.name)}",
+        "",
+        f"🎡 Спинов: {s.spins}",
+        f"🎁 Выдано промокодов: {s.codes_issued}",
+        f"✅ Погашено: {s.redeemed}",
+        f"🙋 Новых гостей: {s.new_guests}",
+    ]
+    if s.redeemed_by:
+        lines += ["", "Кто гасил:"]
+        for telegram_id, n in s.redeemed_by.most_common():
+            lines.append(f"• {html.quote(await display_name(db, club, telegram_id))} — {n}")
+    if s.failed_checks:
+        lines += ["", f"❌ Проверок с неверным кодом: {s.failed_checks}"]
+    await message.answer("\n".join(lines))
 
 
 # --- Сотрудники -------------------------------------------------------------------------

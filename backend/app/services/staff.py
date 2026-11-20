@@ -53,6 +53,20 @@ def is_platform_owner(telegram_id: int) -> bool:
     return telegram_id in get_settings().owner_ids
 
 
+async def display_name(db: AsyncSession, club: Club, telegram_id: int | None) -> str:
+    """Как назвать сотрудника в ответах бота: имя (@username), «владелец платформы» или id."""
+    if telegram_id is None:
+        return "неизвестно кем"
+    if is_platform_owner(telegram_id):
+        return "владелец платформы"
+    staff = await db.scalar(
+        select(ClubStaff).where(ClubStaff.club_id == club.id, ClubStaff.telegram_id == telegram_id)
+    )
+    if staff is None:
+        return f"бывший сотрудник (id {telegram_id})"
+    return Person(staff.telegram_id, staff.first_name, staff.username).title()
+
+
 async def role_in_club(db: AsyncSession, club: Club, telegram_id: int) -> Role | None:
     if is_platform_owner(telegram_id):
         return Role.PLATFORM_OWNER
