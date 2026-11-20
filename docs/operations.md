@@ -68,7 +68,8 @@ gunzip -c backups/bot-2026-11-20_0918.sql.gz | docker compose exec -T db sh -c '
 
 ## Настройки за владельцем (не код)
 
-- [ ] Автозапуск Docker Desktop при входе в Windows.
-- [ ] Отключить сон компьютера-сервера.
+- [x] Автозапуск Docker Desktop при входе в Windows.
+- [x] Отключить сон компьютера-сервера.
+- [ ] Автовход в Windows (`netplwiz`) — иначе после ночного обновления Windows ждёт пароль и Docker не стартует.
 - [ ] `BACKUP_DIR` в облачной папке.
 - [ ] Закрытый репозиторий на GitHub.

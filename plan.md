@@ -97,7 +97,7 @@
 - [x] HTTPS через quick-туннель cloudflared; API сам узнаёт адрес туннеля и перенастраивает ботов при его смене
 - [x] Запуск одной командой: `deploy/compose.server.yml`, автоподъём после перезагрузки
 - [x] Ежедневный бэкап базы в папку `BACKUP_DIR` (OneDrive / Google Drive / другой диск)
-- [ ] Включить автозапуск Docker Desktop и отключить сон компьютера
+- [x] Включить автозапуск Docker Desktop и отключить сон компьютера
 - [ ] Указать `BACKUP_DIR` в облачной папке
 - [x] Инструкция по подключению клуба: [deploy/connect-club.md](deploy/connect-club.md)
 
