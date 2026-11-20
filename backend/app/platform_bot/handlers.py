@@ -6,10 +6,9 @@
 """
 
 import io
-from decimal import Decimal, InvalidOperation
 
 from aiogram import F, Router, html
-from aiogram.exceptions import TelegramAPIError, TelegramUnauthorizedError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramUnauthorizedError
 from aiogram.filters import BaseFilter, Command, CommandStart, StateFilter
 from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
@@ -42,6 +41,8 @@ from app.services.staff import Person, Role, StaffError, assign_superadmin, is_p
 PICK_SUPERADMIN = 10
 COOLDOWNS = [(60, "1 минута (тест)"), (24 * 3600, "1 день"), (7 * 24 * 3600, "7 дней")]
 EXTEND_DAYS = [30, 90, 365]
+# Правила и текст согласия должны поместиться в одно сообщение Telegram (4096 символов).
+RULES_MAX_LENGTH = 3500
 
 
 class Nav(CallbackData, prefix="p"):
@@ -166,7 +167,12 @@ async def get_club(db: AsyncSession, club_id: int) -> Club | None:
 async def show(target: Message | CallbackQuery, text: str, markup=None) -> None:
     """Колбэк — редактируем сообщение с кнопками; обычное сообщение — отвечаем новым."""
     if isinstance(target, CallbackQuery):
-        await target.message.edit_text(text, reply_markup=markup)
+        try:
+            await target.message.edit_text(text, reply_markup=markup)
+        except TelegramBadRequest as e:
+            # Повторное нажатие той же кнопки: на экране уже то, что нужно.
+            if "message is not modified" not in str(e):
+                raise
         await target.answer()
     else:
         await target.answer(text, reply_markup=markup)
@@ -175,6 +181,24 @@ async def show(target: Message | CallbackQuery, text: str, markup=None) -> None:
 async def show_card(target: Message | CallbackQuery, db: AsyncSession, club: Club) -> None:
     text, markup = await card(db, club)
     await show(target, text, markup)
+
+
+class ClubMissing(BaseFilter):
+    """Кнопка ссылается на клуб, которого уже нет (например, старая карточка в чате)."""
+
+    async def __call__(self, callback: CallbackQuery, db: AsyncSession) -> bool:
+        try:
+            data = Nav.unpack(callback.data)
+        except (TypeError, ValueError):
+            return False
+        return data.club_id > 0 and await db.get(Club, data.club_id) is None
+
+
+# Объявлен раньше всех остальных обработчиков кнопок, поэтому срабатывает первым.
+@router.callback_query(ClubMissing())
+async def club_missing(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await callback.answer("Клуб не найден — откройте список клубов заново", show_alert=True)
 
 
 # --- Меню и список клубов ---------------------------------------------------------------
@@ -461,11 +485,9 @@ async def pay_amount(message: Message, db: AsyncSession, state: FSMContext) -> N
     amount = None
     if raw != "-":
         try:
-            amount = Decimal(raw.replace(" ", "").replace(",", "."))
-        except InvalidOperation:
-            amount = Decimal(0)
-        if amount <= 0:
-            await message.answer("Сумма — число больше нуля, например 20000. Или «-» без оплаты.")
+            amount = subscription.parse_amount(raw)
+        except ValueError as e:
+            await message.answer(f"{e}. Отправьте сумму ещё раз или «-» без оплаты.")
             return
     club = await get_club(db, data["club_id"])
     sub = await db.get(Subscription, club.id)
@@ -511,8 +533,13 @@ async def rules_menu(callback: CallbackQuery, callback_data: Nav, db: AsyncSessi
 
 @router.message(PF.rules_text, F.text)
 async def rules_text(message: Message, db: AsyncSession, state: FSMContext) -> None:
+    text = message.text.strip()
+    if len(text) > RULES_MAX_LENGTH:
+        await message.answer(f"Правила — до {RULES_MAX_LENGTH} символов, сейчас {len(text)}. "
+                             "Сократите текст и отправьте ещё раз.")
+        return
     club = await get_club(db, (await state.get_data())["club_id"])
-    club.rules_text = message.text.strip()[:4000]
+    club.rules_text = text
     await db.flush()
     await state.clear()
     await message.answer("✅ Правила сохранены — гости видят их в Mini App и по /rules.")

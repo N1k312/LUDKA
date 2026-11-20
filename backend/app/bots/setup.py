@@ -25,6 +25,13 @@ class BotSetupError(Exception):
     """Понятная ошибка для суперадмина (без токена в тексте)."""
 
 
+def platform_bot_id() -> int | None:
+    """Telegram id бота платформы — первая часть его токена до двоеточия."""
+    token = get_settings().platform_bot_token
+    head = token.get_secret_value().split(":", 1)[0] if token else ""
+    return int(head) if head.isdigit() else None
+
+
 def webhook_url(bot_id: int) -> str:
     return f"{get_settings().base_url}/tg/{bot_id}"
 
@@ -74,6 +81,9 @@ async def connect_bot(db: AsyncSession, club: Club, token: str) -> ClubBot:
     _require_https()
     bot = registry.bot_for_token(token)
     me = await bot.get_me()
+    if me.id == platform_bot_id():
+        # Иначе вебхук бота платформы переставится на /tg/<id>, и пульт перестанет работать.
+        raise BotSetupError("Это токен бота платформы. Для клуба нужен отдельный бот из @BotFather")
 
     existing = await db.get(ClubBot, me.id)
     if existing is not None and existing.club_id != club.id:

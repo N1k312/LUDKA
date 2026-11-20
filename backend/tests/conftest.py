@@ -62,6 +62,19 @@ async def engine(test_db_url: str) -> AsyncIterator[AsyncEngine]:
     await eng.dispose()
 
 
+@pytest.fixture(autouse=True)
+def isolated_settings(monkeypatch):
+    """Тесты не зависят от локального .env: бот платформы, владельцы и туннель выключены.
+
+    Нужные тесту значения он задаёт сам через monkeypatch.
+    """
+    settings = get_settings()
+    monkeypatch.setattr(settings, "platform_bot_token", None)
+    monkeypatch.setattr(settings, "platform_owner_ids", "")
+    monkeypatch.setattr(settings, "test_bot_token", None)
+    monkeypatch.setattr(settings, "tunnel_metrics_url", None)
+
+
 @pytest.fixture
 def telegram(monkeypatch) -> Iterator[FakeTelegram]:
     """Все боты ходят в фейковый Telegram; PUBLIC_BASE_URL — https."""

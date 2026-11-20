@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bots.dispatcher import dp
 from app.bots.registry import registry
 from app.db import get_session
-from app.models import BotStatus, Club, ClubBot, ClubStatus
+from app.models import MAX_BIGINT, BotStatus, Club, ClubBot, ClubStatus
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -27,7 +27,8 @@ async def telegram_webhook(
     db: AsyncSession = Depends(get_session),
     secret: str | None = Header(default=None, alias="X-Telegram-Bot-Api-Secret-Token"),
 ) -> Response:
-    club_bot = await db.get(ClubBot, bot_id)
+    # id вне диапазона BIGINT заведомо не наш бот (иначе база ответит ошибкой → 500).
+    club_bot = await db.get(ClubBot, bot_id) if 0 < bot_id <= MAX_BIGINT else None
     # Один и тот же ответ для «нет такого бота» и «неверный секрет».
     if (
         club_bot is None

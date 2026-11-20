@@ -38,6 +38,9 @@ NAMING_CONVENTION = {
 }
 
 
+# Наибольшее значение колонки BIGINT в PostgreSQL (id ботов, пользователей Telegram).
+MAX_BIGINT = 2**63 - 1
+
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 

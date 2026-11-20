@@ -24,7 +24,7 @@ from app.bots.registry import registry
 from app.config import get_settings
 from app.crypto import decrypt
 from app.db import get_session
-from app.models import BotStatus, Club, ClubBot, Guest, PrizeCode, PrizeOption
+from app.models import MAX_BIGINT, BotStatus, Club, ClubBot, Guest, PrizeCode, PrizeOption
 from app.services.codes import code_status
 from app.services.guests import is_registered
 from app.services.wheel import (
@@ -59,7 +59,8 @@ async def miniapp_context(
     authorization: Annotated[str | None, Header()] = None,
     x_bot_id: Annotated[int | None, Header()] = None,
 ) -> MiniAppContext:
-    if not authorization or not authorization.startswith("tma ") or x_bot_id is None:
+    if (not authorization or not authorization.startswith("tma ")
+            or x_bot_id is None or not 0 < x_bot_id <= MAX_BIGINT):
         raise api_error(401, *UNAUTHORIZED)
 
     club_bot = await db.get(ClubBot, x_bot_id)

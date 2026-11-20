@@ -13,7 +13,7 @@ trial (14 дней) → active (оплаченный период) → past_due 
 
 import logging
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +25,29 @@ logger = logging.getLogger(__name__)
 TRIAL_PERIOD = timedelta(days=14)
 GRACE_PERIOD = timedelta(days=3)
 PLAYABLE = {SubscriptionStatus.TRIAL, SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE}
+
+
+MAX_AMOUNT = Decimal("9999999999.99")  # столько вмещает payments.amount NUMERIC(12, 2)
+
+
+def parse_amount(raw: str) -> Decimal:
+    """«20 000», «20000,50» → Decimal с копейками. ValueError с понятной причиной иначе.
+
+    Отсекает nan, Infinity, слишком большие суммы и суммы, которые после округления
+    до копеек становятся нулём (иначе их отвергла бы база).
+    """
+    try:
+        amount = Decimal(raw.strip().replace(" ", "").replace(",", "."))
+    except InvalidOperation:
+        raise ValueError("Сумма — число, например 20000") from None
+    if not amount.is_finite():
+        raise ValueError("Сумма — обычное число, например 20000")
+    amount = amount.quantize(Decimal("0.01"))
+    if amount <= 0:
+        raise ValueError("Сумма должна быть больше нуля (минимум 0.01)")
+    if amount > MAX_AMOUNT:
+        raise ValueError("Сумма слишком большая (максимум 9 999 999 999.99)")
+    return amount
 
 
 def paid_until(sub: Subscription) -> datetime | None:

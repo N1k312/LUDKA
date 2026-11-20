@@ -24,7 +24,6 @@ import asyncio
 import getpass
 import sys
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
@@ -216,11 +215,9 @@ async def cmd_extend_subscription(db: AsyncSession, args: argparse.Namespace) ->
     amount = None
     if args.amount is not None:
         try:
-            amount = Decimal(args.amount.replace(",", ".").replace(" ", ""))
-        except InvalidOperation:
-            raise CliError("--amount: укажите сумму числом, например 20000") from None
-        if amount <= 0:
-            raise CliError("--amount должна быть больше нуля")
+            amount = subscription.parse_amount(args.amount)
+        except ValueError as e:
+            raise CliError(f"--amount: {e}") from None
     sub = await get_subscription(db, club)
     payment = await subscription.extend(db, sub, args.days, amount, args.comment)
     print(f"Подписка клуба «{club.name}»: {describe_subscription(sub, club)}")

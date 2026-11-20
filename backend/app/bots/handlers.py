@@ -4,6 +4,9 @@
   /start → «Поделиться номером» (только свой контакт) → правила и согласие → «Играть».
 """
 
+import re
+from html import unescape
+
 from aiogram import F, Router, html
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
@@ -68,13 +71,24 @@ def rules_text(club: Club) -> str:
     return f"📜 Правила акции клуба {club_title(club)}\n\n{html.quote(rules)}"
 
 
-def consent_text(club: Club) -> str:
+TELEGRAM_TEXT_LIMIT = 4096
+
+
+def consent_note(club: Club) -> str:
     return (
-        f"{rules_text(club)}\n\n"
         "Нажимая «Принимаю», вы соглашаетесь с правилами акции и даёте согласие "
         f"клубу {club_title(club)} на обработку номера телефона и данных Telegram "
         "для проведения акции и выдачи призов."
     )
+
+
+def consent_text(club: Club) -> str:
+    return f"{rules_text(club)}\n\n{consent_note(club)}"
+
+
+def fits(text: str) -> bool:
+    """Длина так, как её считает Telegram: без HTML-тегов и с раскрытыми сущностями."""
+    return len(unescape(re.sub(r"<[^>]+>", "", text))) <= TELEGRAM_TEXT_LIMIT
 
 
 # --- Шаги регистрации ---------------------------------------------------------
@@ -92,7 +106,13 @@ async def continue_registration(message: Message, club: Club, guest: Guest) -> N
             reply_markup=contact_keyboard(),
         )
     elif guest.consent_at is None:
-        await message.answer(consent_text(club), reply_markup=consent_keyboard())
+        text = consent_text(club)
+        if fits(text):
+            await message.answer(text, reply_markup=consent_keyboard())
+        else:
+            # Длинные правила — отдельным сообщением, иначе Telegram не примет текст.
+            await message.answer(rules_text(club))
+            await message.answer(consent_note(club), reply_markup=consent_keyboard())
     else:
         await message.answer(
             f"Добро пожаловать в {club_title(club)}! 🎉\n\n"

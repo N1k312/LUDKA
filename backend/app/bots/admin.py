@@ -9,7 +9,10 @@
 открывает Mini App в режиме сканера, он отправляет код боту через web_app_data.
 """
 
+from contextlib import suppress
+
 from aiogram import Bot, F, Router, html
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import BaseFilter, Command
 from aiogram.types import (
     CallbackQuery,
@@ -187,13 +190,17 @@ async def typed_code(message: Message, club: Club, db: AsyncSession) -> None:
 async def redeem(callback: CallbackQuery, club: Club, db: AsyncSession) -> None:
     raw = callback.data.removeprefix(REDEEM_PREFIX)
     outcome = await redeem_code(db, club, callback.from_user.id, raw)
+    # Сначала фиксируем погашение и журнал, потом говорим с Telegram: если ответ
+    # не дойдёт (например, «query is too old»), погашение всё равно останется в базе.
+    await db.commit()
     text, _ = describe(outcome, club, callback.from_user.id)
-    await callback.message.edit_text(text, reply_markup=None)
-    if outcome.result == RedemptionResult.REDEEMED:
-        await callback.answer("Погашено")
+    redeemed = outcome.result == RedemptionResult.REDEEMED
+    with suppress(TelegramAPIError):
+        await callback.message.edit_text(text, reply_markup=None)
+    with suppress(TelegramAPIError):
+        await callback.answer("Погашено" if redeemed else "Не удалось погасить")
+    if redeemed:
         await notify_guest_redeemed(callback.bot, outcome, club)
-    else:
-        await callback.answer("Не удалось погасить", show_alert=False)
 
 
 # --- Сотрудники -------------------------------------------------------------------------
