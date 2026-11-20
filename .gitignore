@@ -21,7 +21,7 @@ Thumbs.db
 qr/
 
 # Локальные настройки Claude Code
-.claude/
+.claude/settings.local.json
 
 # Бэкапы базы
 backups/
