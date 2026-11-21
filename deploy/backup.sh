@@ -10,7 +10,7 @@ while true; do
   until pg_isready -q; do sleep 3; done
 
   name="bot-$(date -u +%Y-%m-%d_%H%M).sql.gz"
-  dump="/backups/.dump.sql"
+  dump="/tmp/.dump.sql"  # несжатый дамп не кладём в папку, которая синхронизируется с облаком
   # Код возврата pg_dump проверяем отдельно (в «pg_dump | gzip» он теряется),
   # и пустой дамп за успех не считаем.
   if pg_dump --no-owner --clean --if-exists -f "$dump" && [ -s "$dump" ] \

@@ -44,6 +44,7 @@ from app.services.staff import (
     add_admin,
     assign_superadmin,
     can_assign_superadmin,
+    can_edit_prizes,
     can_manage_admins,
     display_name,
     list_staff,
@@ -57,6 +58,7 @@ ENTER_BUTTON = "⌨️ Ввести код"
 STAFF_BUTTON = "👥 Сотрудники"
 TODAY_BUTTON = "📋 Сегодня"
 GUESTS_BUTTON = "🙋 Гости"
+PRIZES_BUTTON = "🎁 Призы и шансы"
 NEXT_CALLBACK = "admin:next"
 GUESTS_PAGE = "g:list:"
 GUEST_CARD = "g:card:"
@@ -105,6 +107,8 @@ def admin_keyboard(bot_id: int, role: Role) -> ReplyKeyboardMarkup:
     rows = [[KeyboardButton(text=SCAN_BUTTON, web_app=WebAppInfo(url=scan_url)),
              KeyboardButton(text=ENTER_BUTTON)],
             [KeyboardButton(text=TODAY_BUTTON), KeyboardButton(text=GUESTS_BUTTON)]]
+    if can_edit_prizes(role):
+        rows.append([KeyboardButton(text=PRIZES_BUTTON)])
     if can_manage_admins(role):
         rows.append([_pick_user(ADD_ADMIN_BUTTON, PICK_ADMIN), KeyboardButton(text=STAFF_BUTTON)])
     if can_assign_superadmin(role):
@@ -180,6 +184,8 @@ async def admin_menu(message: Message, club: Club, role: Role) -> None:
         "",
         "Отсканируйте QR гостя или отправьте промокод сообщением (например, GG-7K3M9Q).",
     ]
+    if can_edit_prizes(role):
+        lines.append("«🎁 Призы и шансы» — настроить секторы колеса.")
     if can_manage_admins(role):
         lines.append("«➕ Добавить админа» — выбрать человека из контактов, «👥 Сотрудники» — список и удаление.")
     if can_assign_superadmin(role):

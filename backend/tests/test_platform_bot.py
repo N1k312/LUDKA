@@ -178,6 +178,8 @@ async def test_removed_prize_is_deactivated_not_deleted(session, pbot):
     await pbot.send(say("10"))
     await pbot.send(nav("prize_kind", club.id, 0))
     prize = await session.scalar(select(PrizeOption).where(PrizeOption.club_id == club.id))
+    session.add(PrizeOption(club_id=club.id, game_type="wheel", title="Второй приз", weight=10))  # последний нельзя
+    await session.flush()
 
     await pbot.send(nav("prize_del", club.id, prize.id))
 

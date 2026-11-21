@@ -82,6 +82,10 @@ def can_manage_admins(role: Role | None) -> bool:
     return role in (Role.PLATFORM_OWNER, Role.SUPERADMIN)
 
 
+def can_edit_prizes(role: Role | None) -> bool:
+    return role in (Role.PLATFORM_OWNER, Role.SUPERADMIN)
+
+
 def can_assign_superadmin(role: Role | None) -> bool:
     return role == Role.PLATFORM_OWNER
 

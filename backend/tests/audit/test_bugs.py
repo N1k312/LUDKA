@@ -268,8 +268,10 @@ async def test_b13_wheel_without_prizes_and_disabled_wheel(session, telegram, cl
 def test_b14_callback_data_fits_telegram_limit():
     biggest = 9_223_372_036_854_775_807
     worst = [Nav(action=a, club_id=biggest, arg=biggest).pack()
-             for a in ("sub_cancel_yes", "prize_kind", "prize_del", "limit_set", "sub_add")]
+             for a in ("sub_cancel_yes", "prize_kind", "prize_del", "prize_card", "prize_t", "prize_w",
+                       "prize_d", "limit_set", "sub_add")]
     worst += [REDEEM_PREFIX + "GG-ZZZZZZ", f"staff:rm:{biggest}"]
+    worst += [f"pz:{kind}:{biggest}" for kind in "ctwdoy"] + ["pz:list", "pz:add", "pz:k:1"]
     too_long = [d for d in worst if len(d.encode()) > 64]
     assert not too_long, f"длиннее 64 байт: {too_long}"
 

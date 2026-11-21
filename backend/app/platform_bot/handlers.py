@@ -35,6 +35,8 @@ from app.bots.registry import registry
 from app.bots.setup import BotSetupError, connect_bot
 from app.models import Club, ClubBot, Payment, PrizeOption, Subscription
 from app.services import branding, clubs, subscription
+from app.services import prizes as prize_service
+from app.services.prizes import PrizeError, PrizeNotFound
 from app.services.qr import start_link
 from app.services.staff import Person, Role, StaffError, assign_superadmin, is_platform_owner
 
@@ -58,6 +60,7 @@ class PF(StatesGroup):
     prize_title = State()
     prize_weight = State()
     prize_kind = State()
+    prize_edit = State()
     rules_text = State()
     pay_amount = State()
     super_pick = State()
@@ -331,9 +334,76 @@ async def prizes_view(db: AsyncSession, club: Club) -> tuple[str, InlineKeyboard
     lines += [f"{p.emoji or '🎁'} {html.quote(p.title)}{' (пустой)' if p.is_empty else ''} — "
               f"вес {p.weight}, ≈{p.weight / total:.0%}" for p in prizes] or ["Призов пока нет."]
     lines += ["", "Шанс приза = его вес / сумма весов. Удобно, когда сумма = 100."]
-    rows = [[btn(f"🗑 {p.emoji or ''} {p.title}".strip(), "prize_del", club.id, p.id)] for p in prizes]
+    rows = [[btn(f"✏️ {prize_service.label(p)}"[:50], "prize_card", club.id, p.id),
+             btn("🗑", "prize_del", club.id, p.id)] for p in prizes]
     rows.append([btn("➕ Добавить приз", "prize_add", club.id), btn("⬅️ К клубу", "club", club.id)])
     return "\n".join(lines), kb(*rows)
+
+
+def prize_card_view(club: Club, prize: PrizeOption, prizes: list[PrizeOption]) -> tuple[str, InlineKeyboardMarkup]:
+    lines = [f"🎁 <b>{html.quote(prize_service.label(prize))}</b> · {html.quote(club.name)}", "",
+             f"Тип: {'пустой сектор' if prize.is_empty else 'приз с промокодом'}",
+             f"Шанс: {prize.weight} (сейчас {prize_service.chance(prize, prizes)})"]
+    rows = [[btn("✏️ Название", "prize_t", club.id, prize.id), btn("🎯 Шанс", "prize_w", club.id, prize.id)]]
+    if not prize.is_empty:
+        lines.append(f"Срок промокода: {prize.ttl_days} дн.")
+        rows.append([btn("⏳ Срок промокода", "prize_d", club.id, prize.id)])
+    rows.append([btn("🗑 Выключить", "prize_del", club.id, prize.id), btn("⬅️ К призам", "prizes", club.id)])
+    return "\n".join(lines), kb(*rows)
+
+
+PRIZE_FIELDS = {
+    "prize_t": ("rename", "Отправьте новое название, можно с эмодзи: <code>🎮 2 часа игры</code>."),
+    "prize_w": ("set_weight", "Отправьте новый шанс числом, например <code>20</code>."),
+    "prize_d": ("set_ttl", "Сколько дней действует промокод? Например, <code>14</code>. Выданные коды не изменятся."),
+}
+
+
+@router.callback_query(Nav.filter(F.action == "prize_card"))
+async def prize_card(callback: CallbackQuery, callback_data: Nav, db: AsyncSession, state: FSMContext) -> None:
+    await state.clear()
+    club = await get_club(db, callback_data.club_id)
+    try:
+        prize = await prize_service.get_active(db, club, callback_data.arg)
+    except PrizeError as e:
+        await callback.answer(str(e), show_alert=True)
+        return
+    text, markup = prize_card_view(club, prize, await clubs.active_prizes(db, club))
+    await show(callback, text, markup)
+
+
+@router.callback_query(Nav.filter(F.action.in_(PRIZE_FIELDS)))
+async def prize_edit_ask(callback: CallbackQuery, callback_data: Nav, db: AsyncSession, state: FSMContext) -> None:
+    club = await get_club(db, callback_data.club_id)
+    try:
+        prize = await prize_service.get_active(db, club, callback_data.arg)
+    except PrizeError as e:
+        await callback.answer(str(e), show_alert=True)
+        return
+    operation, question = PRIZE_FIELDS[callback_data.action]
+    await state.set_state(PF.prize_edit)
+    await state.update_data(club_id=club.id, prize_id=prize.id, operation=operation)
+    await show(callback, f"{html.quote(prize_service.label(prize))}\n\n{question}\n/cancel — отменить.",
+               kb([btn("⬅️ К призу", "prize_card", club.id, prize.id)]))
+
+
+@router.message(PF.prize_edit, F.text)
+async def prize_edit_save(message: Message, db: AsyncSession, state: FSMContext) -> None:
+    data = await state.get_data()
+    club = await get_club(db, data["club_id"])
+    try:
+        prize, _ = await getattr(prize_service, data["operation"])(db, club, data["prize_id"], message.text)
+    except PrizeNotFound as e:
+        await state.clear()
+        await message.answer(f"⛔ {e}")
+        return
+    except PrizeError as e:
+        await message.answer(f"⛔ {e}")
+        return
+    await state.clear()
+    await db.commit()
+    text, markup = prize_card_view(club, prize, await clubs.active_prizes(db, club))
+    await message.answer(f"✅ Сохранено.\n\n{text}", reply_markup=markup)
 
 
 @router.callback_query(Nav.filter(F.action == "prizes"))
@@ -345,14 +415,15 @@ async def prizes(callback: CallbackQuery, callback_data: Nav, db: AsyncSession, 
 
 @router.callback_query(Nav.filter(F.action == "prize_del"))
 async def prize_del(callback: CallbackQuery, callback_data: Nav, db: AsyncSession) -> None:
-    prize = await db.get(PrizeOption, callback_data.arg)
-    if prize is None or prize.club_id != callback_data.club_id:
-        await callback.answer("Приз не найден", show_alert=True)
+    club = await get_club(db, callback_data.club_id)
+    try:
+        # Строка не удаляется: на приз ссылаются прошлые игры и промокоды.
+        await prize_service.disable(db, club, callback_data.arg)
+    except PrizeError as e:
+        await callback.answer(str(e), show_alert=True)
         return
-    # Не удаляем строку: на приз ссылаются прошлые игры и промокоды. Выключенный не выпадает.
-    prize.active = False
-    await db.flush()
-    text, markup = await prizes_view(db, await get_club(db, callback_data.club_id))
+    await db.commit()
+    text, markup = await prizes_view(db, club)
     await show(callback, text, markup)
 
 
@@ -399,8 +470,13 @@ async def prize_weight(message: Message, state: FSMContext) -> None:
 async def prize_kind(callback: CallbackQuery, callback_data: Nav, db: AsyncSession, state: FSMContext) -> None:
     data = await state.get_data()
     club = await get_club(db, data["club_id"])
-    await clubs.add_prize(db, club, data["title"], data["weight"], data["emoji"], is_empty=bool(callback_data.arg))
     await state.clear()
+    try:
+        await prize_service.create(db, club, data["emoji"], data["title"], data["weight"], bool(callback_data.arg))
+    except PrizeError as e:
+        await callback.answer(str(e), show_alert=True)
+        return
+    await db.commit()
     text, markup = await prizes_view(db, club)
     await show(callback, "✅ Приз добавлен.\n\n" + text, markup)
 
