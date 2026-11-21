@@ -8,6 +8,7 @@ QR-коды у кассы ведут на t.me/<бот> и от адреса н�
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 
 import aiohttp
@@ -22,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 CHECK_SECONDS = 60
 STARTUP_CHECK_SECONDS = 10
+DNS_SETTLE_SECONDS = 90
+MAX_RETRY_SECONDS = 300
 
 Fetcher = Callable[[], Awaitable[str | None]]
 
@@ -86,44 +89,106 @@ async def resolve_public_url(
     )
 
 
+class SyncIncomplete(Exception):
+    """Адрес туннеля ещё не готов — повторить позже."""
+
+
+class TelegramRefused(SyncIncomplete):
+    """Telegram не принял вебхук хотя бы одного бота — повторять редко, с нарастающей паузой."""
+
+
+def retry_delay(refusals: int) -> int:
+    """Пауза после N-го отказа Telegram подряд: 60, 120, 240, затем 300 секунд."""
+    return min(CHECK_SECONDS * 2 ** (refusals - 1), MAX_RETRY_SECONDS)
+
+
+def settled_check(
+    alive: Callable[[str], Awaitable[bool]] = is_alive,
+    clock: Callable[[], float] = time.monotonic,
+) -> Callable[[str], Awaitable[bool]]:
+    """Проверка «адрес открывается уже DNS_SETTLE_SECONDS подряд».
+
+    Наш сервер видит новый адрес раньше, чем DNS Telegram, а неудачный поиск Telegram
+    запоминает на минуты. Поэтому первый запрос к Telegram делаем только после выдержки.
+    """
+    first_seen: dict[str, float] = {}
+
+    async def ready(url: str) -> bool:
+        if not await alive(url):
+            first_seen.pop(url, None)
+            return False
+        return clock() - first_seen.setdefault(url, clock()) >= DNS_SETTLE_SECONDS
+
+    return ready
+
+
 async def sync_public_url(
-    db: AsyncSession, fetch: Fetcher = fetch_quicktunnel_url, force: bool = False
+    db: AsyncSession,
+    fetch: Fetcher = fetch_quicktunnel_url,
+    force: bool = False,
+    alive: Callable[[str], Awaitable[bool]] = is_alive,
 ) -> bool:
     """Обновляет PUBLIC_BASE_URL и ботов, если адрес туннеля сменился. True — было изменение.
 
-    force — перенастроить ботов даже при том же адресе (первый опрос после старта API).
+    force — перенастроить ботов даже при том же адресе (первый опрос после старта API
+    или повтор после неудачи).
+
+    Новый адрес quick-туннеля появляется в DNS не сразу. Если отдать его Telegram раньше,
+    Telegram отвечает «Failed to resolve host» и запоминает это на минуты. Поэтому ботов
+    трогаем, только когда наш /health уже открывается по новому адресу. Если хоть один бот
+    не настроился — SyncIncomplete: watch_tunnel повторит всё целиком.
     """
     url = await fetch()
     settings = get_settings()
     if not url or (url == settings.base_url and not force):
         return False
+    if not await alive(url):
+        raise SyncIncomplete(f"адрес {url} ещё не готов")
 
     logger.info("Новый адрес туннеля: %s — перенастраиваю ботов", url)
     settings.public_base_url = url
+    failed = 0
     bots = (await db.scalars(select(ClubBot).where(ClubBot.status == BotStatus.ACTIVE))).all()
     for club_bot in bots:
         try:
             await refresh_bot(db, club_bot)
         except Exception:
+            failed += 1
             logger.exception("Не удалось перенастроить бота %s", club_bot.bot_id)
     try:
         from app.platform_bot.setup import configure_platform_bot
 
         await configure_platform_bot()
     except Exception:
+        failed += 1
         logger.exception("Не удалось перенастроить бота платформы")
+    if failed:
+        raise TelegramRefused(f"не настроено ботов: {failed}")
+    logger.info("Все боты перенастроены на %s", url)
     return True
 
 
 async def watch_tunnel(session_factory: Callable[[], AsyncSession]) -> None:
-    known = False
+    pending = True  # последняя настройка не завершена — повторять даже при том же адресе
+    refusals = 0  # отказов Telegram подряд
+    ready = settled_check()
     while True:
+        refused = False
         try:
             async with session_factory() as db:
-                await sync_public_url(db, force=not known)
-            known = True
+                await sync_public_url(db, force=pending, alive=ready)
+            pending, refusals = False, 0
         except Exception as e:
-            # Туннель ещё поднимается или временно недоступен — попробуем позже.
-            logger.warning("Адрес туннеля пока недоступен: %s", type(e).__name__)
-        # Пока адрес не получен ни разу (старт), проверяем чаще.
-        await asyncio.sleep(CHECK_SECONDS if known else STARTUP_CHECK_SECONDS)
+            pending = True
+            refused = isinstance(e, TelegramRefused)
+            refusals = refusals + 1 if refused else refusals
+            # Туннель ещё поднимается, адрес не виден в DNS или Telegram его не принял.
+            detail = str(e) if isinstance(e, SyncIncomplete) else type(e).__name__
+            logger.warning("Боты пока не перенастроены (%s) — повторю", detail)
+        if refused:
+            delay = retry_delay(refusals)
+        elif pending:
+            delay = STARTUP_CHECK_SECONDS  # ждём готовности адреса
+        else:
+            delay = CHECK_SECONDS
+        await asyncio.sleep(delay)

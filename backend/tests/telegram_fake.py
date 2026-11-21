@@ -2,6 +2,7 @@
 
 from aiogram import methods
 from aiogram.client.session.base import BaseSession
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import File, User
 
 
@@ -10,9 +11,13 @@ class FakeTelegram(BaseSession):
         super().__init__()
         self.calls: list = []
         self.files: dict[str, bytes] = {}
+        # Методы, на которые «Telegram» отвечает ошибкой: {methods.SetWebhook: "текст ошибки"}.
+        self.fail: dict[type, str] = {}
 
     async def make_request(self, bot, method, timeout=None):
         self.calls.append(method)
+        if type(method) in self.fail:
+            raise TelegramBadRequest(method=method, message=self.fail[type(method)])
         if isinstance(method, methods.GetMe):
             return User(id=bot.id, is_bot=True, first_name="Test Club", username="test_club_bot")
         if isinstance(method, methods.GetFile):

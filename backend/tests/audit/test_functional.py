@@ -265,7 +265,10 @@ async def test_f11_tunnel_change_reconfigures_every_bot(session, telegram, monke
     async def fetch():
         return "https://new.trycloudflare.com"
 
-    await sync_public_url(session, fetch)
+    async def alive(url):
+        return True
+
+    await sync_public_url(session, fetch, alive=alive)
 
     urls = sorted(h.url for h in telegram.of(methods.SetWebhook))
     assert urls == ["https://new.trycloudflare.com/tg/123456789",
