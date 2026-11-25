@@ -122,7 +122,7 @@ async def test_b04_weird_payment_amount_is_rejected_politely(session, pbot, amou
 
 @pytest.mark.parametrize("action,arg", [
     ("club", 0), ("bot", 0), ("prizes", 0), ("super", 0), ("sub", 0),
-    ("rules", 0), ("qr", 0), ("limit_set", 60), ("sub_cancel_yes", 0),
+    ("rules", 0), ("qr", 0), ("game_cd", 600), ("sub_cancel_yes", 0),
 ])
 async def test_b05_unknown_club_in_platform_button(pbot, action, arg):
     await pbot.send(nav(action, 999_999, arg))
@@ -184,9 +184,9 @@ async def test_b07_same_button_twice_still_answers(session, telegram, platform_o
 
     pbot = PlatformClient(client, strict)
     club = await clubs.create_club(session, "Клуб")
-    await pbot.send(nav("limit_set", club.id, 60))
+    await pbot.send(nav("game_cd", club.id, 60 * 10))
 
-    await pbot.send(nav("limit_set", club.id, 60))  # та же карточка — Telegram откажет в редактировании
+    await pbot.send(nav("game_cd", club.id, 60 * 10))  # та же карточка — Telegram откажет в редактировании
 
     assert pbot.answers(), "второе нажатие осталось без ответа — у пользователя «висит» кнопка"
 
@@ -271,8 +271,8 @@ def test_b14_callback_data_fits_telegram_limit():
              for a in ("sub_cancel_yes", "prize_kind", "prize_del", "prize_card", "prize_t", "prize_w",
                        "prize_d", "limit_set", "sub_add", "games", "game_on", "game_cd")]
     worst += [REDEEM_PREFIX + "GG-ZZZZZZ", f"staff:rm:{biggest}"]
-    worst += [f"pz:{kind}:{biggest}" for kind in "ctwdoy"] + ["pz:list", "pz:add", "pz:k:1", "pz:g"]
-    worst += [f"pz:{p}:{g}" for p in ("l", "a", "on") for g in ("wheel", "cups", "case")]
+    worst += [f"pz:{kind}:{biggest}" for kind in "ctwdoy"] + ["pz:list", "pz:add", "pz:g", "staff:add"]
+    worst += [f"pz:{p}:{g}" for p in ("l", "a", "e", "on") for g in ("wheel", "cups", "case")]
     worst += [f"pz:cd:{g}:604800" for g in ("wheel", "cups", "case")]
     too_long = [d for d in worst if len(d.encode()) > 64]
     assert not too_long, f"длиннее 64 байт: {too_long}"

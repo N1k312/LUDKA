@@ -149,7 +149,7 @@ async def test_f04_cooldown_set_from_platform_applies(session, telegram, client,
     session.add(Guest(club_id=club.id, telegram_id=GUEST, phone="+77010000000", consent_at=datetime.now(UTC)))
     h = api(TOKEN_A, BOT_A, GUEST)
 
-    await pbot.send(nav("limit_set", club.id, 60))
+    await pbot.send(nav("game_cd", club.id, 60 * 10))
     first = (await client.post("/api/spin", headers=h)).json()
     blocked = await client.post("/api/spin", headers=h)
     await session.execute(update(Play).values(played_at=Play.played_at - timedelta(seconds=61)))

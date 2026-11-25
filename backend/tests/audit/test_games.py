@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.bots.admin import GAMES_BUTTON
 from app.bots.dispatcher import dp
-from app.bots.prize_editor import ADD_GAME, GAME_LIMIT, GAME_TOGGLE, KIND, LIST_GAME
+from app.bots.prize_editor import ADD_GAME, GAME_LIMIT, GAME_TOGGLE, LIST_GAME
 from app.models import ClubStaff, GameConfig, GameType, Guest, Play, PrizeCode, PrizeOption, StaffRole
 from app.services import clubs, prizes
 from app.services.wheel import CUPS_COUNT
@@ -279,13 +279,10 @@ async def test_prize_added_to_chosen_game(session, telegram, client):
     club, bot = await setup(session, telegram, client)
 
     await bot.send(press(f"{ADD_GAME}case"))
-    await bot.send(message_update("👑 Ночь в VIP", user_id=SUPER))
-    await bot.send(message_update("1", user_id=SUPER))
-    await bot.send(press(f"{KIND}0"))
-    await bot.send(message_update("7", user_id=SUPER))
+    await bot.send(message_update("👑 Ночь в VIP 1", user_id=SUPER))
 
     added = await session.scalar(select(PrizeOption).where(PrizeOption.title == "Ночь в VIP"))
-    assert added.game_type == GameType.CASE and added.club_id == club.id
+    assert added.game_type == GameType.CASE and added.club_id == club.id and added.weight == 1
 
 
 async def test_other_club_games_untouched(session, telegram, client):

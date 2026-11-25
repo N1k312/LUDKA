@@ -55,13 +55,17 @@ from app.services.staff import (
 
 REDEEM_PREFIX = "redeem:"
 SCAN_BUTTON = "📷 Сканировать QR"
-ENTER_BUTTON = "⌨️ Ввести код"
 STAFF_BUTTON = "👥 Сотрудники"
 TODAY_BUTTON = "📋 Сегодня"
 GUESTS_BUTTON = "🙋 Гости"
+GAMES_BUTTON = "🎮 Игры и призы"
+CANCEL_BUTTON = "⬅️ Отмена"
+# Кнопки прежних клавиатур: у сотрудников они остаются на экране, пока не открыт /admin заново.
+ENTER_BUTTON = "⌨️ Ввести код"
 PRIZES_BUTTON = "🎁 Призы и шансы"
-GAMES_BUTTON = "🎮 Игры"
+OLD_GAMES_BUTTON = "🎮 Игры"
 NEXT_CALLBACK = "admin:next"
+ADD_ADMIN_CALLBACK = "staff:add"
 GUESTS_PAGE = "g:list:"
 GUEST_CARD = "g:card:"
 GUEST_FIND = "g:find"
@@ -105,17 +109,28 @@ def _pick_user(text: str, request_id: int) -> KeyboardButton:
 
 
 def admin_keyboard(bot_id: int, role: Role) -> ReplyKeyboardMarkup:
+    """Сканер — первой строкой во всю ширину: это 95% работы у кассы. Код можно и просто отправить текстом."""
     scan_url = f"{get_settings().webapp_url_for(bot_id)}&scan=1"
-    rows = [[KeyboardButton(text=SCAN_BUTTON, web_app=WebAppInfo(url=scan_url)),
-             KeyboardButton(text=ENTER_BUTTON)],
+    rows = [[KeyboardButton(text=SCAN_BUTTON, web_app=WebAppInfo(url=scan_url))],
             [KeyboardButton(text=TODAY_BUTTON), KeyboardButton(text=GUESTS_BUTTON)]]
+    manage = []
     if can_edit_prizes(role):
-        rows.append([KeyboardButton(text=GAMES_BUTTON), KeyboardButton(text=PRIZES_BUTTON)])
+        manage.append(KeyboardButton(text=GAMES_BUTTON))
     if can_manage_admins(role):
-        rows.append([_pick_user(ADD_ADMIN_BUTTON, PICK_ADMIN), KeyboardButton(text=STAFF_BUTTON)])
+        manage.append(KeyboardButton(text=STAFF_BUTTON))  # «➕ Добавить админа» — внутри
+    if manage:
+        rows.append(manage)
     if can_assign_superadmin(role):
         rows.append([_pick_user(SUPERADMIN_BUTTON, PICK_SUPERADMIN)])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)
+
+
+def pick_admin_keyboard() -> ReplyKeyboardMarkup:
+    """Временная клавиатура: выбор человека из контактов Telegram работает только кнопкой внизу экрана."""
+    return ReplyKeyboardMarkup(
+        keyboard=[[_pick_user(ADD_ADMIN_BUTTON, PICK_ADMIN)], [KeyboardButton(text=CANCEL_BUTTON)]],
+        resize_keyboard=True, one_time_keyboard=True,
+    )
 
 
 def mask_phone(phone: str | None) -> str:
@@ -151,10 +166,8 @@ def describe(
         ]])
         return (f"🟢 Промокод {code} действителен\n\n{details}", keyboard)
     if outcome.result == RedemptionResult.REDEEMED:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="➡️ Следующий промокод", callback_data=NEXT_CALLBACK)
-        ]])
-        return (f"✅ Промокод {code} погашен. Выдайте приз гостю.\n\n{details}", keyboard)
+        # Без кнопки «Следующий»: сканер и так всегда внизу экрана.
+        return (f"✅ Промокод {code} погашен. Выдайте приз гостю.\n\n{details}", None)
     if outcome.result == RedemptionResult.ALREADY_REDEEMED:
         by = "вами" if prize.redeemed_by == admin_id else html.quote(redeemer or "другим сотрудником")
         return (
@@ -184,20 +197,22 @@ async def admin_menu(message: Message, club: Club, role: Role) -> None:
         f"🛠 Админ-панель клуба {html.bold(html.quote(club.name))}",
         f"Ваша роль: {ROLE_TITLES[role]}",
         "",
-        "Отсканируйте QR гостя или отправьте промокод сообщением (например, GG-7K3M9Q).",
+        "Нажмите «📷 Сканировать QR» или просто отправьте промокод сообщением (например, GG-7K3M9Q).",
     ]
     if can_edit_prizes(role):
-        lines.append("«🎮 Игры» — включить колесо, стаканчики или кейс; «🎁 Призы и шансы» — призы каждой игры.")
+        lines.append("«🎮 Игры и призы» — включить игры, лимиты, призы и шансы.")
     if can_manage_admins(role):
-        lines.append("«➕ Добавить админа» — выбрать человека из контактов, «👥 Сотрудники» — список и удаление.")
+        lines.append("«👥 Сотрудники» — список, добавить и убрать админа.")
     if can_assign_superadmin(role):
         lines.append("«👑 Назначить суперадмина» — один на клуб, прежний станет админом.")
     await message.answer("\n".join(lines), reply_markup=admin_keyboard(message.bot.id, role))
 
 
 @router.message(F.text == ENTER_BUTTON)
-async def ask_code(message: Message) -> None:
-    await message.answer("Отправьте промокод сообщением, например GG-7K3M9Q.")
+async def ask_code(message: Message, role: Role) -> None:
+    """Кнопка старой клавиатуры: подсказка и сразу новая клавиатура."""
+    await message.answer("Отправьте промокод сообщением, например GG-7K3M9Q.",
+                         reply_markup=admin_keyboard(message.bot.id, role))
 
 
 async def redeemer_name(db: AsyncSession, club: Club, outcome: Outcome) -> str | None:
@@ -408,8 +423,10 @@ async def today_summary(message: Message, club: Club, db: AsyncSession) -> None:
 
 
 def staff_text_and_keyboard(club: Club, staff: list[ClubStaff], role: Role, actor_id: int):
+    add = [InlineKeyboardButton(text="➕ Добавить админа", callback_data=ADD_ADMIN_CALLBACK)]
     if not staff:
-        return f"В клубе {html.quote(club.name)} пока нет сотрудников.", None
+        markup = InlineKeyboardMarkup(inline_keyboard=[add]) if can_manage_admins(role) else None
+        return f"В клубе {html.quote(club.name)} пока нет сотрудников.", markup
     lines, buttons = [f"👥 Сотрудники клуба {html.bold(html.quote(club.name))}", ""], []
     for s in staff:
         person = Person(s.telegram_id, s.first_name, s.username)
@@ -424,8 +441,28 @@ def staff_text_and_keyboard(club: Club, staff: list[ClubStaff], role: Role, acto
                 text=f"Убрать: {person.first_name or s.telegram_id}",
                 callback_data=f"{REMOVE_PREFIX}{s.telegram_id}",
             )])
+    if can_manage_admins(role):
+        buttons.append(add)
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
     return "\n".join(lines), keyboard
+
+
+@router.callback_query(F.data == ADD_ADMIN_CALLBACK)
+async def ask_new_admin(callback: CallbackQuery, role: Role) -> None:
+    if not can_manage_admins(role):
+        await callback.answer("Добавлять админов может суперадмин клуба", show_alert=True)
+        return
+    with suppress(TelegramAPIError):
+        await callback.answer()
+    await callback.message.answer(
+        "Нажмите «➕ Добавить админа» внизу и выберите человека из контактов Telegram.",
+        reply_markup=pick_admin_keyboard(),
+    )
+
+
+@router.message(F.text == CANCEL_BUTTON)
+async def cancel_pick(message: Message, role: Role) -> None:
+    await message.answer("Хорошо, никого не добавляем.", reply_markup=admin_keyboard(message.bot.id, role))
 
 
 @router.message(F.text == STAFF_BUTTON)
@@ -466,10 +503,13 @@ async def user_picked(message: Message, club: Club, db: AsyncSession, role: Role
             await greet_new_staff(message.bot, club, person.telegram_id, "суперадмин")
         elif shared.request_id == PICK_ADMIN:
             await add_admin(db, club, role, person)
-            await message.answer(f"🔑 {html.quote(person.title())} — админ клуба {html.quote(club.name)}.")
+            await db.commit()  # сначала база, потом Telegram
+            # Ответ возвращает обычную клавиатуру вместо временной «выбрать человека».
+            await message.answer(f"🔑 {html.quote(person.title())} — админ клуба {html.quote(club.name)}.",
+                                 reply_markup=admin_keyboard(message.bot.id, role))
             await greet_new_staff(message.bot, club, person.telegram_id, "админ")
     except StaffError as e:
-        await message.answer(f"⛔ {e}")
+        await message.answer(f"⛔ {e}", reply_markup=admin_keyboard(message.bot.id, role))
 
 
 @router.callback_query(F.data.startswith(REMOVE_PREFIX))

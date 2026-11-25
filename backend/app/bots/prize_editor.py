@@ -23,9 +23,11 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bots.admin import (
+    CANCEL_BUTTON,
     ENTER_BUTTON,
     GAMES_BUTTON,
     GUESTS_BUTTON,
+    OLD_GAMES_BUTTON,
     PRIZES_BUTTON,
     STAFF_BUTTON,
     TODAY_BUTTON,
@@ -45,7 +47,8 @@ PREFIX = "pz:"
 LIST = "pz:list"  # колесо (старые кнопки)
 LIST_GAME = "pz:l:"
 ADD = "pz:add"  # колесо (старые кнопки)
-ADD_GAME = "pz:a:"
+ADD_GAME = "pz:a:"   # приз с промокодом
+ADD_EMPTY = "pz:e:"  # пустой сектор
 GAMES_VIEW = "pz:g"
 GAME_TOGGLE = "pz:on:"
 GAME_LIMIT = "pz:cd:"
@@ -56,9 +59,10 @@ EDIT_WEIGHT = "pz:w:"
 EDIT_TTL = "pz:d:"
 OFF_ASK = "pz:o:"
 OFF_YES = "pz:y:"
-KIND = "pz:k:"
 
-MENU_BUTTONS = {ENTER_BUTTON, TODAY_BUTTON, GUESTS_BUTTON, PRIZES_BUTTON, GAMES_BUTTON, STAFF_BUTTON}
+# «Игры и призы» открывается и кнопками прежних клавиатур («🎮 Игры», «🎁 Призы и шансы»).
+OPEN_BUTTONS = {GAMES_BUTTON, OLD_GAMES_BUTTON, PRIZES_BUTTON}
+MENU_BUTTONS = {ENTER_BUTTON, TODAY_BUTTON, GUESTS_BUTTON, STAFF_BUTTON, CANCEL_BUTTON, *OPEN_BUTTONS}
 
 
 def parse_game(raw: str) -> GameType:
@@ -74,6 +78,8 @@ def game_from(data: str) -> GameType:
         return parse_game(data.removeprefix(LIST_GAME))
     if data.startswith(ADD_GAME):
         return parse_game(data.removeprefix(ADD_GAME))
+    if data.startswith(ADD_EMPTY):
+        return parse_game(data.removeprefix(ADD_EMPTY))
     return GameType.WHEEL
 
 
@@ -81,10 +87,7 @@ class PrizeEdit(StatesGroup):
     title = State()
     weight = State()
     ttl = State()
-    new_title = State()
-    new_weight = State()
-    new_kind = State()
-    new_ttl = State()
+    new_prize = State()  # одно сообщение: эмодзи, название и шанс
 
 
 class CanEdit(BaseFilter):
@@ -133,7 +136,8 @@ async def list_view(db: AsyncSession, club: Club, game: GameType = GameType.WHEE
              for g in GAMES]]
     rows += [[button(f"{prize_service.label(p)} · {prize_service.chance(p, prizes)}"[:60], f"{CARD}{p.id}")]
              for p in prizes]
-    rows.append([button("➕ Добавить приз", f"{ADD_GAME}{game.value}")])
+    rows.append([button("➕ Приз", f"{ADD_GAME}{game.value}"), button("➕ Пустой", f"{ADD_EMPTY}{game.value}")])
+    rows.append([button("⬅️ К играм", GAMES_VIEW)])
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -199,19 +203,12 @@ async def denied(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer("Призы может менять только суперадмин клуба", show_alert=True)
 
 
-@router.message(F.text.in_({PRIZES_BUTTON, GAMES_BUTTON}), CannotEdit())
+@router.message(F.text.in_(OPEN_BUTTONS), CannotEdit())
 async def denied_menu(message: Message) -> None:
     await message.answer("Игры, призы и шансы доступны суперадмину клуба.")
 
 
 # --- Просмотр --------------------------------------------------------------------------------
-
-
-@router.message(F.text == PRIZES_BUTTON)
-async def open_prizes(message: Message, club: Club, db: AsyncSession, state: FSMContext) -> None:
-    await state.clear()
-    text, markup = await list_view(db, club)
-    await message.answer(text, reply_markup=markup)
 
 
 @router.callback_query(F.data.func(lambda d: d == LIST or d.startswith(LIST_GAME)))
@@ -356,93 +353,55 @@ async def confirm_off(callback: CallbackQuery, club: Club, db: AsyncSession, rol
 # --- Новый приз ------------------------------------------------------------------------------
 
 
-@router.callback_query(F.data.func(lambda d: d == ADD or d.startswith(ADD_GAME)))
+@router.callback_query(F.data.func(lambda d: d == ADD or d.startswith((ADD_GAME, ADD_EMPTY))))
 async def add_start(callback: CallbackQuery, club: Club, db: AsyncSession, state: FSMContext) -> None:
+    """«➕ Приз» / «➕ Пустой» → одно сообщение с названием и шансом. Срок промокода — 14 дней,
+    его можно поменять в карточке приза."""
     try:
         game = game_from(callback.data)
     except PrizeError as e:
         await not_found(callback, club, db, e)
         return
-    if len(await clubs.active_prizes(db, club, game)) >= prize_service.MAX_SECTORS:
+    prizes = await clubs.active_prizes(db, club, game)
+    if len(prizes) >= prize_service.MAX_SECTORS:
         await callback.answer(f"В игре максимум {prize_service.MAX_SECTORS} призов", show_alert=True)
         return
-    await state.set_state(PrizeEdit.new_title)
-    await state.update_data(game=game.value)
+    empty = callback.data.startswith(ADD_EMPTY)
+    await state.set_state(PrizeEdit.new_prize)
+    await state.update_data(game=game.value, empty=empty)
     with suppress(TelegramAPIError):
         await callback.answer()
-    await callback.message.answer(f"{GAME_ICONS[game]} {GAME_TITLES[game]}: отправьте приз — эмодзи и название, "
-                                  "например <code>🎮 1 час игры</code>.\n/cancel — отменить.")
+    total = sum(p.weight for p in prizes)
+    hint = (f"Сейчас сумма шансов: {total}" + (f" — до 100 осталось {100 - total}." if total < 100 else ".")
+            if prizes else "Удобно, когда сумма шансов всех призов игры равна 100.")
+    if empty:
+        ask = ("Отправьте шанс пустого сектора числом, например <code>30</code>. "
+               "Можно с названием: <code>😔 Повезёт в следующий раз 30</code>.")
+    else:
+        ask = (f"Отправьте приз и шанс одним сообщением, например <code>🎮 1 час игры 20</code>. "
+               f"Промокод будет действовать {prize_service.DEFAULT_TTL_DAYS} дней — срок можно поменять в карточке приза.")
+    await callback.message.answer(f"{GAME_ICONS[game]} {GAME_TITLES[game]}\n\n{ask}\n{hint}\n/cancel — отменить.")
 
 
-@router.message(PrizeEdit.new_title, *INPUT)
-async def add_title(message: Message, club: Club, db: AsyncSession, state: FSMContext) -> None:
-    try:
-        emoji, title = prize_service.parse_title(message.text)
-    except PrizeError as e:
-        await message.answer(f"⛔ {e}")
-        return
-    game = GameType((await state.get_data()).get("game", GameType.WHEEL))
-    total = sum(p.weight for p in await clubs.active_prizes(db, club, game))
-    await state.update_data(emoji=emoji, title=title)
-    await state.set_state(PrizeEdit.new_weight)
-    await message.answer(f"Шанс приза числом, например <code>20</code>. Сейчас сумма шансов: {total}.")
-
-
-@router.message(PrizeEdit.new_weight, *INPUT)
-async def add_weight(message: Message, state: FSMContext) -> None:
-    try:
-        weight = prize_service.parse_weight(message.text)
-    except PrizeError as e:
-        await message.answer(f"⛔ {e}")
-        return
-    await state.update_data(weight=weight)
-    await state.set_state(PrizeEdit.new_kind)
-    await message.answer(
-        "Это приз или пустой сектор («повезёт в следующий раз»)?",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            button("🎁 Приз с промокодом", f"{KIND}0"), button("😔 Пустой сектор", f"{KIND}1")]]),
-    )
-
-
-async def finish_add(
-    target: Message, user: User, club: Club, db: AsyncSession, state: FSMContext, role: Role, ttl_days: int,
-    is_empty: bool,
-) -> None:
+@router.message(PrizeEdit.new_prize, *INPUT)
+async def add_prize(message: Message, club: Club, db: AsyncSession, state: FSMContext, role: Role) -> None:
     data = await state.get_data()
-    await state.clear()
-    game = GameType(data.get("game", GameType.WHEEL))
     try:
-        _, change = await prize_service.create(
-            db, club, data["emoji"], data["title"], data["weight"], is_empty, ttl_days, game=game)
+        emoji, title, weight = prize_service.parse_new_prize(message.text, data.get("empty", False))
     except PrizeError as e:
-        await target.answer(f"⛔ {e}")
+        await message.answer(f"⛔ {e}")  # остаёмся в режиме ввода
+        return
+    game = GameType(data.get("game", GameType.WHEEL))
+    await state.clear()
+    try:
+        _, change = await prize_service.create(db, club, emoji, title, weight, data.get("empty", False), game=game)
+    except PrizeError as e:
+        await message.answer(f"⛔ {e}")
         return
     await db.commit()
     text, markup = await list_view(db, club, game)
-    await target.answer(f"✅ Приз добавлен.\n\n{text}", reply_markup=markup)
-    await notify_platform(club, role, user, change)
-
-
-@router.callback_query(PrizeEdit.new_kind, F.data.startswith(KIND))
-async def add_kind(callback: CallbackQuery, club: Club, db: AsyncSession, state: FSMContext, role: Role) -> None:
-    with suppress(TelegramAPIError):
-        await callback.answer()
-    if callback.data == f"{KIND}1":
-        await finish_add(callback.message, callback.from_user, club, db, state, role,
-                         prize_service.DEFAULT_TTL_DAYS, True)
-        return
-    await state.set_state(PrizeEdit.new_ttl)
-    await callback.message.answer("Сколько дней действует промокод? Например, <code>14</code>.")
-
-
-@router.message(PrizeEdit.new_ttl, *INPUT)
-async def add_ttl(message: Message, club: Club, db: AsyncSession, state: FSMContext, role: Role) -> None:
-    try:
-        days = prize_service.parse_ttl(message.text)
-    except PrizeError as e:
-        await message.answer(f"⛔ {e}")
-        return
-    await finish_add(message, message.from_user, club, db, state, role, days, False)
+    await message.answer(f"✅ Добавлено.\n\n{text}", reply_markup=markup)
+    await notify_platform(club, role, message.from_user, change)
 
 
 # --- Игры: включение и лимит -----------------------------------------------------------------
@@ -450,7 +409,7 @@ async def add_ttl(message: Message, club: Club, db: AsyncSession, state: FSMCont
 
 async def games_view(db: AsyncSession, club: Club) -> tuple[str, InlineKeyboardMarkup]:
     configs = await clubs.game_configs(db, club)
-    lines = [f"🎮 <b>Игры</b> · {html.quote(club.name)}", ""]
+    lines = [f"🎮 <b>Игры и призы</b> · {html.quote(club.name)}", ""]
     rows = []
     for game in GAMES:
         config = configs[game]
@@ -461,14 +420,15 @@ async def games_view(db: AsyncSession, club: Club) -> tuple[str, InlineKeyboardM
                      f"раз в {period}, призов {count}")
         rows.append([button(f"{GAME_ICONS[game]} {'Выключить' if config.enabled else 'Включить'}",
                             f"{GAME_TOGGLE}{game.value}"),
-                     button("🎁 Призы", f"{LIST_GAME}{game.value}")])
+                     button(f"🎁 Призы ({count})", f"{LIST_GAME}{game.value}")])
         rows.append([button(f"{'✓ ' if config.cooldown_seconds == s else ''}{label}", f"{GAME_LIMIT}{game.value}:{s}")
                      for s, label in CLUB_COOLDOWNS])
-    lines += ["", "Новую игру можно включить, когда в ней есть хотя бы один приз с промокодом."]
+    lines += ["", "«🎁 Призы» — призы и шансы игры. Новую игру можно включить, когда в ней есть "
+              "хотя бы один приз с промокодом. Ниже каждой игры — как часто гость может в неё играть."]
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-@router.message(F.text == GAMES_BUTTON)
+@router.message(F.text.in_(OPEN_BUTTONS))
 async def open_games(message: Message, club: Club, db: AsyncSession, state: FSMContext) -> None:
     await state.clear()
     text, markup = await games_view(db, club)

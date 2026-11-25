@@ -241,10 +241,11 @@ async def test_already_redeemed_names_who(session, telegram, client):
     [reply] = await bot.send(message_update(code, user_id=OTHER_ADMIN))
 
     assert "Аня (@anya)" in reply.text
-    assert edited.reply_markup.inline_keyboard[0][0].callback_data == NEXT_CALLBACK
+    assert edited.reply_markup is None  # без «Следующий промокод»: сканер и так внизу экрана
 
 
-async def test_next_code_button(session, telegram, client):
+async def test_old_next_code_button_still_answers(session, telegram, client):
+    """Кнопка «➡️ Следующий промокод» в старых сообщениях — подсказка и клавиатура со сканером."""
     _, bot, _ = await admin_setup(session, telegram, client)
     [reply] = await bot.send(callback_update(NEXT_CALLBACK, user_id=ADMIN))
     assert "следующий промокод" in reply.text.lower()

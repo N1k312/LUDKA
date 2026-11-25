@@ -147,7 +147,7 @@ async def test_s03_privilege_escalation_in_club_bot(session, telegram, client):
 
 @pytest.mark.parametrize("action,arg", [
     ("new", 0), ("bot", 0), ("prize_del", -1), ("super", 0), ("sub_add", 30),
-    ("sub_cancel_yes", 0), ("rules", 0), ("limit_set", 60), ("qr", 0),
+    ("sub_cancel_yes", 0), ("rules", 0), ("game_cd", 600), ("qr", 0),
 ])
 async def test_s04_stranger_cannot_use_platform_bot(session, pbot, action, arg):
     club, _ = await club_with_bot(session, "А", TOKEN_A)

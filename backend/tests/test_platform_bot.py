@@ -140,7 +140,7 @@ async def test_full_club_onboarding_through_buttons(session, pbot):
     # 6. Правила и лимит
     await pbot.send(nav("rules", club.id))
     await pbot.send(say("Крутить можно раз в неделю."))
-    await pbot.send(nav("limit_set", club.id, 60))
+    await pbot.send(nav("game_cd", club.id, 60 * 10))
     await session.refresh(club)
     assert club.rules_text == "Крутить можно раз в неделю."
     assert (await session.get(GameConfig, (club.id, "wheel"))).cooldown_seconds == 60

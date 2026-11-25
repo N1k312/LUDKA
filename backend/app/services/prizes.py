@@ -67,6 +67,28 @@ def parse_weight(text: str) -> int:
     return _parse_int(text, 1, MAX_WEIGHT, f"Шанс — целое число от 1 до {MAX_WEIGHT}, например 20.")
 
 
+EMPTY_TITLE = "Повезёт в следующий раз"
+EMPTY_EMOJI = "😔"
+
+
+def parse_new_prize(text: str, empty: bool) -> tuple[str | None, str, int]:
+    """«🎮 1 час игры 20» → (эмодзи, название, шанс). Для пустого сектора можно прислать только число."""
+    text = text.strip()
+    head, _, last = text.rpartition(" ")
+    if empty and not head:
+        head, last = "", text
+    if not last.removesuffix("%").strip().isdigit():
+        example = "😔 Повезёт в следующий раз 30" if empty else "🎮 1 час игры 20"
+        raise PrizeError(f"Добавьте шанс числом в конце, например: {example}")
+    weight = parse_weight(last)
+    if not head.strip():
+        if empty:
+            return EMPTY_EMOJI, EMPTY_TITLE, weight
+        raise PrizeError("Нужно название и шанс, например: 🎮 1 час игры 20")
+    emoji, title = parse_title(head)
+    return emoji, title, weight
+
+
 def parse_ttl(text: str) -> int:
     return _parse_int(text, 1, MAX_TTL_DAYS, f"Срок — целое число дней от 1 до {MAX_TTL_DAYS}, например 14.")
 

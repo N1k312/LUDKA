@@ -6,9 +6,19 @@ import pytest
 from aiogram import methods
 from sqlalchemy import select
 
-from app.bots.admin import ADD_ADMIN_BUTTON, PRIZES_BUTTON, TODAY_BUTTON
+from app.bots.admin import GAMES_BUTTON, OLD_GAMES_BUTTON, PRIZES_BUTTON, STAFF_BUTTON, TODAY_BUTTON
 from app.bots.dispatcher import dp
-from app.bots.prize_editor import ADD, CARD, EDIT_TITLE, EDIT_TTL, EDIT_WEIGHT, KIND, OFF_ASK, OFF_YES
+from app.bots.prize_editor import (
+    ADD,
+    ADD_EMPTY,
+    CARD,
+    EDIT_TITLE,
+    EDIT_TTL,
+    EDIT_WEIGHT,
+    LIST,
+    OFF_ASK,
+    OFF_YES,
+)
 from app.models import ClubStaff, Guest, PrizeCode, PrizeOption, StaffRole
 from app.services import clubs, prizes
 from tests.audit.conftest import BOT_A, OWNER, TOKEN_A, TOKEN_B, api, club_with_bot, nav, say
@@ -41,12 +51,30 @@ def text(data: str, user_id: int = SUPER) -> dict:
     return message_update(data, user_id=user_id)
 
 
+async def open_list(bot) -> str:
+    """Список призов колеса (кнопка «🎁 Призы» в «Игры и призы»)."""
+    await bot.send(press(LIST))
+    [edited] = bot.edited()
+    return edited.text
+
+
 async def test_list_shows_real_percentages(session, telegram, client):
     _, bot, _ = await setup(session, telegram, client)
 
-    [reply] = await bot.send(text(PRIZES_BUTTON))
+    listing = await open_list(bot)
 
-    assert "Час игры — 30%" in reply.text and "Мимо (пустой) — 50%" in reply.text
+    assert "Час игры — 30%" in listing and "Мимо (пустой) — 50%" in listing
+
+
+@pytest.mark.parametrize("button", [GAMES_BUTTON, OLD_GAMES_BUTTON, PRIZES_BUTTON])
+async def test_games_and_prizes_open_from_new_and_old_buttons(session, telegram, client, button):
+    _, bot, _ = await setup(session, telegram, client)
+
+    [reply] = await bot.send(text(button))
+
+    assert "Игры и призы" in reply.text
+    labels = [b.text for row in reply.reply_markup.inline_keyboard for b in row]
+    assert "🎁 Призы (3)" in labels
 
 
 async def test_superadmin_changes_chance_title_and_ttl(session, telegram, client):
@@ -77,18 +105,38 @@ async def test_bad_chance_is_refused_and_input_continues(session, telegram, clie
     assert rows[0].weight == 25
 
 
-async def test_add_prize_with_ttl(session, telegram, client):
+async def test_add_prize_in_one_message(session, telegram, client):
     club, bot, _ = await setup(session, telegram, client)
 
     await bot.send(press(ADD))
-    await bot.send(text("🥤 Кола"))
-    await bot.send(text("10"))
-    await bot.send(press(f"{KIND}0"))
-    await bot.send(text("7"))
+    await bot.send(text("🥤 Кола 10"))
 
     added = await session.scalar(select(PrizeOption).where(PrizeOption.club_id == club.id,
                                                            PrizeOption.title == "Кола"))
-    assert (added.weight, added.ttl_days, added.is_empty, added.emoji) == (10, 7, False, "🥤")
+    assert (added.weight, added.ttl_days, added.is_empty, added.emoji) == (10, 14, False, "🥤")
+
+
+async def test_add_empty_sector_with_just_a_number(session, telegram, client):
+    club, bot, _ = await setup(session, telegram, client)
+
+    await bot.send(press(f"{ADD_EMPTY}wheel"))
+    await bot.send(text("15"))
+
+    added = await session.scalar(select(PrizeOption).where(PrizeOption.club_id == club.id,
+                                                           PrizeOption.weight == 15))
+    assert added.is_empty and added.title == "Повезёт в следующий раз"
+
+
+async def test_add_prize_without_chance_asks_again(session, telegram, client):
+    club, bot, _ = await setup(session, telegram, client)
+    await bot.send(press(ADD))
+
+    [reply] = await bot.send(text("🥤 Кола"))
+    await bot.send(text("🥤 Кола 5"))
+
+    assert "шанс числом" in reply.text
+    added = await session.scalar(select(PrizeOption).where(PrizeOption.title == "Кола"))
+    assert added.weight == 5
 
 
 async def test_sector_limit(session, telegram, client):
@@ -189,8 +237,8 @@ async def test_admin_keyboard_has_no_prizes_button(session, telegram, client):
     [super_reply] = await bot.send(text("/admin", user_id=SUPER))
 
     labels = lambda m: [b.text for row in m.reply_markup.keyboard for b in row]  # noqa: E731
-    assert PRIZES_BUTTON not in labels(admin_reply)
-    assert PRIZES_BUTTON in labels(super_reply) and ADD_ADMIN_BUTTON in labels(super_reply)
+    assert GAMES_BUTTON not in labels(admin_reply)
+    assert labels(super_reply) == ["📷 Сканировать QR", TODAY_BUTTON, "🙋 Гости", GAMES_BUTTON, STAFF_BUTTON]
 
 
 async def test_demoted_superadmin_cannot_finish_input(session, telegram, client):
@@ -234,9 +282,9 @@ async def test_title_is_html_escaped(session, telegram, client):
     await bot.send(press(f"{EDIT_TITLE}{rows[0].id}"))
     await bot.send(text("<b>x</b>"))
 
-    [reply] = await bot.send(text(PRIZES_BUTTON))
+    listing = await open_list(bot)
 
-    assert "&lt;b&gt;x&lt;/b&gt;" in reply.text
+    assert "&lt;b&gt;x&lt;/b&gt;" in listing
 
 
 # --- Уведомление и пульт ---------------------------------------------------------------------

@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bots.admin import (
     ADD_ADMIN_BUTTON,
+    ADD_ADMIN_CALLBACK,
+    CANCEL_BUTTON,
     PICK_ADMIN,
     PICK_SUPERADMIN,
     REDEEM_PREFIX,
@@ -83,7 +85,7 @@ async def test_platform_owner_has_full_panel_in_any_club_without_staff_record(se
     [reply] = await bot_a.send(message_update("/admin", user_id=OWNER))
 
     assert "владелец платформы" in reply.text
-    assert {ADD_ADMIN_BUTTON, STAFF_BUTTON, SUPERADMIN_BUTTON} <= set(buttons(reply))
+    assert {STAFF_BUTTON, SUPERADMIN_BUTTON} <= set(buttons(reply))
     assert OWNER not in await staff_roles(session, bot_a.club_bot.club_id)
 
 
@@ -91,14 +93,35 @@ async def test_superadmin_panel_can_add_admins_but_not_superadmin(bot_a):
     [reply] = await bot_a.send(message_update("/admin", user_id=SUPER_A))
 
     assert "суперадмин клуба" in reply.text
-    assert ADD_ADMIN_BUTTON in buttons(reply) and STAFF_BUTTON in buttons(reply)
+    assert STAFF_BUTTON in buttons(reply) and ADD_ADMIN_BUTTON not in buttons(reply)  # добавление — внутри
     assert SUPERADMIN_BUTTON not in buttons(reply)
 
 
 async def test_admin_panel_has_only_codes(bot_a):
     [reply] = await bot_a.send(message_update("/admin", user_id=ADMIN_A))
 
-    assert not {ADD_ADMIN_BUTTON, STAFF_BUTTON, SUPERADMIN_BUTTON} & set(buttons(reply))
+    assert buttons(reply) == ["📷 Сканировать QR", "📋 Сегодня", "🙋 Гости"]
+
+
+async def test_add_admin_from_staff_screen_and_back(bot_a):
+    [staff] = await bot_a.send(message_update(STAFF_BUTTON, user_id=SUPER_A))
+    inline = [b.callback_data for row in staff.reply_markup.inline_keyboard for b in row]
+    [pick] = await bot_a.send(callback_update(ADD_ADMIN_CALLBACK, user_id=SUPER_A))
+    picked, _greeting = await bot_a.send(users_shared_update(PICK_ADMIN, NEWBIE, user_id=SUPER_A))
+    [cancel] = await bot_a.send(message_update(CANCEL_BUTTON, user_id=SUPER_A))
+
+    assert ADD_ADMIN_CALLBACK in inline
+    assert pick.reply_markup.keyboard[0][0].request_users.request_id == PICK_ADMIN
+    assert "админ клуба" in picked.text and STAFF_BUTTON in buttons(picked)  # обычная клавиатура вернулась
+    assert STAFF_BUTTON in buttons(cancel)
+
+
+async def test_admin_cannot_open_add_admin(bot_a):
+    sent = await bot_a.send(callback_update(ADD_ADMIN_CALLBACK, user_id=ADMIN_A))
+
+    assert sent == []
+    [answer] = bot_a.telegram.of(methods.AnswerCallbackQuery)
+    assert answer.show_alert
 
 
 # --- Назначения ------------------------------------------------------------------------------
@@ -152,8 +175,11 @@ async def test_staff_list_shows_remove_buttons_by_rights(bot_a):
     [as_super] = await bot_a.send(message_update(STAFF_BUTTON, user_id=SUPER_A))
     [as_owner] = await bot_a.send(message_update(STAFF_BUTTON, user_id=OWNER))
 
-    super_targets = [b[0].callback_data for b in as_super.reply_markup.inline_keyboard]
-    owner_targets = [b[0].callback_data for b in as_owner.reply_markup.inline_keyboard]
+    def removable(reply):
+        return [b[0].callback_data for b in reply.reply_markup.inline_keyboard
+                if b[0].callback_data.startswith(REMOVE_PREFIX)]
+
+    super_targets, owner_targets = removable(as_super), removable(as_owner)
     assert super_targets == [f"{REMOVE_PREFIX}{ADMIN_A}"]       # себя и суперадмина — нельзя
     assert set(owner_targets) == {f"{REMOVE_PREFIX}{SUPER_A}", f"{REMOVE_PREFIX}{ADMIN_A}"}
 

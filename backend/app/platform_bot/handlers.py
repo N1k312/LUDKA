@@ -675,24 +675,6 @@ async def qr(callback: CallbackQuery, callback_data: Nav, db: AsyncSession) -> N
     )
 
 
-@router.callback_query(Nav.filter(F.action == "limit"))
-async def limit_menu(callback: CallbackQuery, callback_data: Nav) -> None:
-    c = callback_data.club_id
-    await show(callback, "⏱ Как часто гость может крутить колесо?",
-               kb(*[[btn(label, "limit_set", c, seconds)] for seconds, label in COOLDOWNS],
-                  [btn("⬅️ К клубу", "club", c)]))
-
-
-@router.callback_query(Nav.filter(F.action == "limit_set"))
-async def limit_set(callback: CallbackQuery, callback_data: Nav, db: AsyncSession) -> None:
-    if callback_data.arg not in {s for s, _ in COOLDOWNS}:
-        await callback.answer("Недопустимое значение", show_alert=True)
-        return
-    club = await get_club(db, callback_data.club_id)
-    await clubs.set_cooldown(db, club, callback_data.arg)
-    await show_card(callback, db, club)
-
-
 # --- Игры: включение и лимит ----------------------------------------------------------------
 # game_cd: arg = секунды * 10 + номер игры (в Nav только одно число).
 
@@ -714,7 +696,8 @@ async def games_view(db: AsyncSession, club: Club) -> tuple[str, InlineKeyboardM
     return "\n".join(lines), kb(*rows)
 
 
-@router.callback_query(Nav.filter(F.action == "games"))
+# «limit», «limit_set» — кнопки старых карточек «⏱ Лимит спинов»: ведут на «🎮 Игры».
+@router.callback_query(Nav.filter(F.action.in_({"games", "limit", "limit_set"})))
 async def games_menu(callback: CallbackQuery, callback_data: Nav, db: AsyncSession) -> None:
     club = await get_club(db, callback_data.club_id)
     text, markup = await games_view(db, club)
