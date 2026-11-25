@@ -28,3 +28,7 @@ backups/
 
 # Картинки оформления клубов
 backend/media/
+
+# Результаты и лог нагрузочного теста
+backend/loadtest/server.log
+backend/loadtest/last-result.json

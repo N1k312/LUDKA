@@ -1,6 +1,6 @@
 # Тесты
 
-416 тестов, все зелёные (на 2026-11-25). Тесты используют отдельную базу `<имя>_test` в том же PostgreSQL (пересоздаётся при каждом запуске, данные разработки не трогает) и **фейковый Telegram** — в сеть ничего не уходит.
+418 тестов, все зелёные (на 2026-11-25). Тесты используют отдельную базу `<имя>_test` в том же PostgreSQL (пересоздаётся при каждом запуске, данные разработки не трогает) и **фейковый Telegram** — в сеть ничего не уходит.
 
 ## Команды (из `backend/`)
 
@@ -26,7 +26,7 @@ Mini App (из `miniapp/`): `npm run build` — проверка типов и �
 | `tests/audit/test_security.py` | атаки: матрица авторизации API, вебхуки, повышение прав, инъекции, секреты, конфигурация, файлы контейнеров |
 | `tests/audit/test_branding.py` | оформление клуба, префикс кодов, регистрация из Mini App, приветствие, «Сегодня» |
 | `tests/audit/test_reset.py` | сброс регистрации гостя и очистка данных клуба |
-| `tests/audit/test_games.py` | три игры: API, редкость без шансов, стаканчики, лимиты, включение, бот и пульт |
+| `tests/audit/test_games.py` | три игры: API, редкость без шансов, стаканчики, лимиты, включение, бот и пульт; сторожа багов аудита 25.11 (приз с шансом 0 скрыт, параллельное создание настроек игр) |
 | `tests/audit/test_prize_editor.py` | «🎁 Призы и шансы»: правка, защита колеса, права, изоляция клубов, уведомление, пульт |
 | `tests/audit/test_guest_list.py` | «🙋 Гости»: список, поиск, карточка, изоляция |
 
@@ -54,3 +54,40 @@ Mini App (из `miniapp/`): `npm run build` — проверка типов и �
 - Новый эндпоинт API — добавить в `ENDPOINTS` в `test_security.py` (матрица авторизации).
 - Новый публичный путь Caddy — осознанно добавить в `test_s15`.
 - Новая `callback_data` — в `test_b14` (лимит 64 байта).
+
+## Нагрузочный тест
+
+Код — `backend/loadtest/` (`server.py` — сервер с заглушкой Telegram, `run.py` — сценарии и замеры). Результаты и расчёт на 1 клуб — [load-test.md](load-test.md). Рабочая база и боты не затрагиваются: всё идёт во временную базу, каждый прогон начинается с чистой схемы.
+
+Временная база (из корня):
+
+```bash
+docker run -d --rm --name loadtest-db -e POSTGRES_USER=load -e POSTGRES_PASSWORD=load -e POSTGRES_DB=load -p 127.0.0.1:55432:5432 postgres:17
+```
+
+Быстрый прогон — сервер на Windows из venv (из `backend/`):
+
+```bash
+PYTHONIOENCODING=utf-8 .venv/Scripts/python -m loadtest.run
+```
+
+Точный прогон — сервер на рабочем образе в Linux (так получены цифры в load-test.md), из корня:
+
+```bash
+docker network create loadnet && docker network connect loadnet loadtest-db
+```
+
+```bash
+MSYS_NO_PATHCONV=1 docker run -d --rm --name loadtest-api --network loadnet --env-file .env -e LOADTEST_DB=postgresql+asyncpg://load:load@loadtest-db:5432/load -e LOADTEST_HOST=0.0.0.0 -v "$PWD/backend/loadtest:/app/loadtest:ro" -v "$PWD/backend/tests:/app/tests:ro" -p 127.0.0.1:8766:8765 bot-api:latest python -m loadtest.server
+```
+
+```bash
+cd backend && PYTHONIOENCODING=utf-8 LOADTEST_API_CONTAINER=loadtest-api LOADTEST_PORT=8766 .venv/Scripts/python -m loadtest.run
+```
+
+После: `docker stop loadtest-api loadtest-db`, `docker network rm loadnet`.
+
+Настройки через переменные: `LOADTEST_LEVELS` («10:300,100:800» — одновременно:заходов), `LOADTEST_EXTRAS=0` (только игры), `LOADTEST_WORKERS` (процессов генератора, 6), `LOADTEST_TG_DELAY` (задержка заглушки Telegram, 0.15 с), `LOADTEST_POOL` («20:20» — пул соединений с базой для сравнения).
+
+- `--env-file .env` нужен только ради `ENCRYPTION_KEY`: бот платформы, туннель и адрес базы `server.py` подменяет, Telegram заменён заглушкой.
+- Один процесс генератора упирается в своё ядро раньше сервера — смотрите колонку загрузки генератора, она должна быть далеко от 100%.

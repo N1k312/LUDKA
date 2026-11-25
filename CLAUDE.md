@@ -17,7 +17,8 @@ SaaS для клубов Казахстана и СНГ: у каждого кл�
 | ботов: сценарии, кнопки, `callback_data`, состояния FSM | [docs/bots.md](docs/bots.md) |
 | запуска, туннеля, бэкапов, сбоев, режима разработки | [docs/operations.md](docs/operations.md) |
 | «почему сделано так» и перед спорным изменением | [docs/decisions.md](docs/decisions.md) |
-| тестов, фикстур, как проверить изменения | [docs/testing.md](docs/testing.md) |
+| тестов, фикстур, как проверить изменения, нагрузочного теста | [docs/testing.md](docs/testing.md) |
+| нагрузки, сколько клубов выдержит сервер | [docs/load-test.md](docs/load-test.md) |
 | что должен уметь продукт | [requirments.md](requirments.md) |
 | что сделано и что дальше | [plan.md](plan.md) |
 | подключения клуба (для людей) | [deploy/connect-club.md](deploy/connect-club.md) |
