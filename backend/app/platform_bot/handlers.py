@@ -6,6 +6,8 @@
 """
 
 import io
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from aiogram import F, Router, html
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramUnauthorizedError
@@ -31,9 +33,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bots.admin import greet_new_staff
+from app.bots.notify import notify_club_owner
 from app.bots.registry import registry
 from app.bots.setup import BotSetupError, connect_bot
-from app.models import Club, ClubBot, GameType, Payment, PrizeOption, Subscription
+from app.models import (
+    Club,
+    ClubBot,
+    ClubStatus,
+    GameType,
+    Payment,
+    PrizeOption,
+    Subscription,
+    SubscriptionStatus,
+)
 from app.services.wheel import GAME_ICONS, GAME_TITLES, GAMES
 from app.services import branding, clubs, subscription
 from app.services import prizes as prize_service
@@ -116,7 +128,7 @@ MENU_TEXT = (
     "Здесь подключаются и настраиваются клубы: бот клуба, игры и призы, суперадмин, "
     "подписка, правила и QR для кассы. /cancel — отменить ввод."
 )
-MENU_KB = kb([btn("🏢 Клубы", "clubs"), btn("➕ Новый клуб", "new")])
+MENU_KB = kb([btn("🏢 Клубы", "clubs"), btn("💳 К оплате", "billing")], [btn("➕ Новый клуб", "new")])
 
 
 def human_seconds(seconds: int) -> str:
@@ -130,16 +142,45 @@ def human_seconds(seconds: int) -> str:
 
 
 def sub_line(sub: Subscription | None, club: Club) -> str:
+    """Подписка словами. Неоплата игры не останавливает — доступ отключает владелец вручную."""
     if sub is None:
         return "нет"
+    now = datetime.now(UTC)
     until = subscription.paid_until(sub)
-    return f"{sub.status}, оплачено до {clubs.local(until, club)}" if until else str(sub.status)
+    status = subscription.compute_status(sub, now)
+    if status == SubscriptionStatus.CANCELED:
+        return "отменена — играть нельзя, продлите, чтобы включить"
+    if status == SubscriptionStatus.TRIAL:
+        return f"пробный период до {clubs.local(until, club)}"
+    if status == SubscriptionStatus.ACTIVE:
+        return f"оплачено до {clubs.local(until, club)}"
+    since = f"с {clubs.local(until, club)} " if until else ""
+    return f"⚠️ не оплачено {since}({subscription.unpaid_days(sub, now)} дн.), игры работают"
+
+
+def access_mark(club: Club, sub: Subscription | None) -> str:
+    """Значок клуба в списках: ⏸ доступ отключён, ⚠️ не оплачено, ⏳ скоро к оплате."""
+    if club.status != ClubStatus.ACTIVE:
+        return "⏸"
+    if sub is None:
+        return "⚠️"
+    now = datetime.now(UTC)
+    if subscription.compute_status(sub, now) in (SubscriptionStatus.PAST_DUE, SubscriptionStatus.CANCELED):
+        return "⚠️"
+    until = subscription.paid_until(sub)
+    return "⏳" if until and until - now < subscription.DUE_SOON else "🟢"
 
 
 async def card(db: AsyncSession, club: Club) -> tuple[str, InlineKeyboardMarkup]:
     s = await clubs.club_summary(db, club)
     owner = s["owner"]
     warnings = []
+    disabled = club.status != ClubStatus.ACTIVE
+    if disabled:
+        warnings.append("⏸ Доступ отключён: гости не могут играть. Данные и бот сохранены.")
+    elif s["subscription"] and subscription.compute_status(
+            s["subscription"], datetime.now(UTC)) == SubscriptionStatus.PAST_DUE:
+        warnings.append("⚠️ Не оплачено. Игры работают, пока вы не отключите доступ.")
     if s["bot"] is None:
         warnings.append("⚠️ Бот не подключён")
     game_lines = []
@@ -159,6 +200,7 @@ async def card(db: AsyncSession, club: Club) -> tuple[str, InlineKeyboardMarkup]
     lines = [
         f"🏢 <b>{html.quote(club.name)}</b> · id {club.id}",
         "",
+        f"🔌 Доступ: {'⏸ отключён' if disabled else '✅ включён'}",
         f"🤖 Бот: {'@' + s['bot'].username if s['bot'] else 'не подключён'}",
         f"💳 Подписка: {sub_line(s['subscription'], club)}",
         *game_lines,
@@ -174,6 +216,7 @@ async def card(db: AsyncSession, club: Club) -> tuple[str, InlineKeyboardMarkup]
         [btn("👑 Суперадмин", "super", c), btn("💳 Подписка", "sub", c)],
         [btn("📜 Правила", "rules", c), btn("🔲 QR для кассы", "qr", c)],
         [btn("🎮 Игры", "games", c), btn("🎨 Оформление", "brand", c)],
+        [btn("▶️ Вернуть доступ", "access_on", c) if disabled else btn("⏸ Отключить доступ", "access_off", c)],
         [btn("🧹 Сброс данных", "data", c), btn("⬅️ Клубы", "clubs")],
     )
     return "\n".join(lines), keyboard
@@ -246,11 +289,16 @@ async def menu(callback: CallbackQuery, state: FSMContext) -> None:
 async def club_list(callback: CallbackQuery, db: AsyncSession, state: FSMContext) -> None:
     await state.clear()
     rows = (await db.execute(
-        select(Club, ClubBot).outerjoin(ClubBot, ClubBot.club_id == Club.id).order_by(Club.id)
+        select(Club, ClubBot, Subscription)
+        .outerjoin(ClubBot, ClubBot.club_id == Club.id)
+        .outerjoin(Subscription, Subscription.club_id == Club.id)
+        .order_by(Club.id)
     )).all()
-    buttons = [[btn(f"{c.name} · {'@' + b.username if b else 'без бота'}", "club", c.id)] for c, b in rows]
+    buttons = [[btn(f"{access_mark(c, s)} {c.name} · {'@' + b.username if b else 'без бота'}", "club", c.id)]
+               for c, b, s in rows]
     buttons.append([btn("➕ Новый клуб", "new"), btn("⬅️ Меню", "menu")])
-    text = "🏢 <b>Клубы</b>" if rows else "Клубов пока нет — создайте первый."
+    text = ("🏢 <b>Клубы</b>\n\n🟢 оплачено · ⏳ скоро к оплате · ⚠️ не оплачено · ⏸ доступ отключён"
+            if rows else "Клубов пока нет — создайте первый.")
     await show(callback, text, kb(*buttons))
 
 
@@ -574,9 +622,11 @@ async def sub_menu(callback: CallbackQuery, callback_data: Nav, db: AsyncSession
         lines += ["", "Последние оплаты:"] + [
             f"{clubs.local(p.paid_at, club)} — {p.amount} {p.currency} {html.quote(p.comment or '')}"
             for p in payments]
+    lines += ["", "Подписка продлевается сама: если клуб не заплатил, игры продолжают работать, "
+              "пока вы не отключите доступ в карточке клуба."]
     await show(callback, "\n".join(lines), kb(
         [btn(f"+{d} дней", "sub_add", club.id, d) for d in EXTEND_DAYS],
-        [btn("⛔ Отменить подписку", "sub_cancel", club.id), btn("⬅️ К клубу", "club", club.id)],
+        [btn("⬅️ К клубу", "club", club.id)],
     ))
 
 
@@ -612,21 +662,77 @@ async def pay_amount(message: Message, db: AsyncSession, state: FSMContext) -> N
     await show_card(message, db, club)
 
 
-@router.callback_query(Nav.filter(F.action == "sub_cancel"))
-async def sub_cancel(callback: CallbackQuery, callback_data: Nav) -> None:
-    c = callback_data.club_id
-    await show(callback, "Отменить подписку? Игры в клубе остановятся, "
-               "выданные промокоды по-прежнему можно будет погасить.",
-               kb([btn("Да, отменить", "sub_cancel_yes", c), btn("Нет", "sub", c)]))
+# --- Доступ клуба: отключить (например, за неоплату) и вернуть ---------------------------------
+# «sub_cancel», «sub_cancel_yes» — кнопки старых экранов «Отменить подписку»: теперь это отключение доступа.
+
+ACCESS_OFF_TEXT = (
+    "⏸ Доступ к играм клуба приостановлен владельцем платформы.\n\n"
+    "Гости пока не могут играть. Уже выданные промокоды можно погасить как обычно. "
+    "По вопросам оплаты свяжитесь с владельцем платформы."
+)
+ACCESS_ON_TEXT = "▶️ Доступ клуба восстановлен — игры снова работают."
 
 
-@router.callback_query(Nav.filter(F.action == "sub_cancel_yes"))
-async def sub_cancel_yes(callback: CallbackQuery, callback_data: Nav, db: AsyncSession) -> None:
+@router.callback_query(Nav.filter(F.action.in_({"access_off", "sub_cancel"})))
+async def access_off_ask(callback: CallbackQuery, callback_data: Nav, db: AsyncSession) -> None:
     club = await get_club(db, callback_data.club_id)
-    sub = await db.get(Subscription, club.id)
-    if sub is not None:
-        await subscription.cancel(db, sub)
-    await show_card(callback, db, club)
+    c = club.id
+    await show(callback,
+               f"⏸ Отключить доступ клуба «{html.quote(club.name)}»?\n\n"
+               "• Гости не смогут играть — в Mini App будет «Акция временно недоступна».\n"
+               "• Уже выданные промокоды админ сможет погасить.\n"
+               "• Бот, гости, призы, сотрудники и история сохранятся.\n"
+               "• Суперадмин клуба получит сообщение.\n\n"
+               "Вернуть доступ можно в любой момент кнопкой «▶️ Вернуть доступ».",
+               kb([btn("⏸ Да, отключить", "access_off_yes", c), btn("Нет", "club", c)]))
+
+
+@router.callback_query(Nav.filter(F.action.in_({"access_off_yes", "sub_cancel_yes"})))
+async def access_off(callback: CallbackQuery, callback_data: Nav, db: AsyncSession) -> None:
+    await change_access(callback, db, callback_data.club_id, enabled=False)
+
+
+@router.callback_query(Nav.filter(F.action == "access_on"))
+async def access_on(callback: CallbackQuery, callback_data: Nav, db: AsyncSession) -> None:
+    await change_access(callback, db, callback_data.club_id, enabled=True)
+
+
+async def change_access(callback: CallbackQuery, db: AsyncSession, club_id: int, enabled: bool) -> None:
+    club = await get_club(db, club_id)
+    changed = await clubs.set_access(db, club, enabled)
+    await db.commit()  # сначала база, потом Telegram
+    text, markup = await card(db, club)
+    note = ("▶️ Доступ возвращён." if enabled else "⏸ Доступ отключён.") if changed else "Без изменений."
+    await show(callback, f"{note}\n\n{text}", markup)
+    if changed:
+        await notify_club_owner(db, club, ACCESS_ON_TEXT if enabled else ACCESS_OFF_TEXT)
+
+
+# --- К оплате ---------------------------------------------------------------------------------
+
+
+@router.callback_query(Nav.filter(F.action == "billing"))
+async def billing(callback: CallbackQuery, db: AsyncSession, state: FSMContext) -> None:
+    """Кому выставить счёт: не оплачено, срок истекает в ближайшие 3 дня, доступ отключён."""
+    await state.clear()
+    now = datetime.now(UTC)
+    rows = (await db.execute(
+        select(Club, Subscription).outerjoin(Subscription, Subscription.club_id == Club.id).order_by(Club.id)
+    )).all()
+    lines, buttons = ["💳 <b>К оплате</b>", ""], []
+    for club, sub in rows:
+        mark = access_mark(club, sub)
+        if mark == "🟢":
+            continue
+        status = "доступ отключён" if mark == "⏸" else sub_line(sub, club).removeprefix("⚠️ ")
+        lines.append(f"{mark} {html.quote(club.name)} — {status}")
+        buttons.append([btn(f"{mark} {club.name}"[:60], "club", club.id)])
+    if not buttons:
+        lines.append("Все клубы оплачены, ближайшие 3 дня платежей нет. 🎉")
+    lines += ["", "⏳ — срок оплаты в ближайшие 3 дня, ⚠️ — не оплачено (игры работают), ⏸ — доступ отключён. "
+              f"Обновлено {now.astimezone(ZoneInfo('Asia/Almaty')):%d.%m %H:%M}."]
+    buttons.append([btn("⬅️ Меню", "menu")])
+    await show(callback, "\n".join(lines), kb(*buttons))
 
 
 # --- Правила, QR, лимит ------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""Подписка: статусы по датам, продление, отмена; без подписки колесо стоит, а погашение работает."""
+"""Подписка: статусы по датам, продление. Неоплата игры не останавливает — это делает владелец вручную."""
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Club, Payment, Subscription, SubscriptionStatus as S
 from app.services import subscription
-from app.services.subscription import GRACE_PERIOD, allows_play, compute_status
+from app.services.subscription import allows_play, compute_status, unpaid_days
 
 NOW = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
 DAY = timedelta(days=1)
@@ -24,17 +24,22 @@ def sub(status=S.TRIAL, trial_ends_at=None, current_period_end=None) -> Subscrip
     "s,expected",
     [
         (sub(trial_ends_at=NOW + DAY), S.TRIAL),
-        (sub(trial_ends_at=NOW - DAY), S.PAST_DUE),              # отсрочка после пробного периода
-        (sub(trial_ends_at=NOW - GRACE_PERIOD - DAY), S.CANCELED),
+        (sub(trial_ends_at=NOW - DAY), S.PAST_DUE),              # пробный кончился — «не оплачено»
+        (sub(trial_ends_at=NOW - 60 * DAY), S.PAST_DUE),         # и спустя 2 месяца не отменяется сама
         (sub(S.ACTIVE, NOW - 30 * DAY, NOW + DAY), S.ACTIVE),
         (sub(S.ACTIVE, NOW - 30 * DAY, NOW - DAY), S.PAST_DUE),
-        (sub(S.PAST_DUE, NOW - 30 * DAY, NOW - 4 * DAY), S.CANCELED),
-        (sub(S.CANCELED, NOW + DAY), S.CANCELED),                # отмена вручную не снимается датами
-        (sub(trial_ends_at=None), S.CANCELED),
+        (sub(S.PAST_DUE, NOW - 30 * DAY, NOW - 40 * DAY), S.PAST_DUE),
+        (sub(S.CANCELED, NOW + DAY), S.CANCELED),                # старая отмена не снимается датами
+        (sub(trial_ends_at=None), S.PAST_DUE),
     ],
 )
 def test_compute_status(s, expected):
     assert compute_status(s, NOW) == expected
+
+
+def test_unpaid_days():
+    assert unpaid_days(sub(trial_ends_at=NOW + DAY), NOW) == 0
+    assert unpaid_days(sub(S.ACTIVE, None, NOW - 5 * DAY), NOW) == 5
 
 
 @pytest.mark.parametrize("status,playable", [(S.TRIAL, True), (S.ACTIVE, True), (S.PAST_DUE, True), (S.CANCELED, False)])
@@ -93,4 +98,4 @@ async def test_refresh_statuses_moves_by_dates(session: AsyncSession):
     changed = await subscription.refresh_statuses(session, now=NOW)
 
     assert changed == 1
-    assert (trial.status, expired.status, canceled.status) == (S.TRIAL, S.CANCELED, S.CANCELED)
+    assert (trial.status, expired.status, canceled.status) == (S.TRIAL, S.PAST_DUE, S.CANCELED)

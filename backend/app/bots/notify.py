@@ -1,14 +1,32 @@
-"""Сообщения гостю от бота клуба вне диалога (например, промокод после спина)."""
+"""Сообщения от бота клуба вне диалога: промокод гостю, уведомление суперадмину клуба."""
 
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, html
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Club, PrizeCode, PrizeOption
+from app.bots.registry import registry
+from app.models import Club, ClubBot, ClubStaff, PrizeCode, PrizeOption, StaffRole
 
 logger = logging.getLogger(__name__)
+
+
+async def notify_club_owner(db: AsyncSession, club: Club, text: str) -> bool:
+    """Сообщение суперадмину клуба через бот клуба. False — бота или суперадмина нет, или Telegram отказал."""
+    club_bot = await db.scalar(select(ClubBot).where(ClubBot.club_id == club.id))
+    owner = await db.scalar(select(ClubStaff).where(ClubStaff.club_id == club.id,
+                                                    ClubStaff.role == StaffRole.OWNER))
+    if club_bot is None or owner is None:
+        return False
+    try:
+        await registry.get(club_bot).send_message(owner.telegram_id, text)
+        return True
+    except Exception:  # суперадмин мог не писать боту или заблокировать его
+        logger.warning("Не удалось уведомить суперадмина клуба %s", club.id)
+        return False
 
 
 def local_date(value: datetime, club: Club) -> str:

@@ -269,7 +269,8 @@ def test_b14_callback_data_fits_telegram_limit():
     biggest = 9_223_372_036_854_775_807
     worst = [Nav(action=a, club_id=biggest, arg=biggest).pack()
              for a in ("sub_cancel_yes", "prize_kind", "prize_del", "prize_card", "prize_t", "prize_w",
-                       "prize_d", "limit_set", "sub_add", "games", "game_on", "game_cd")]
+                       "prize_d", "limit_set", "sub_add", "games", "game_on", "game_cd",
+                       "access_off", "access_off_yes", "access_on", "billing")]
     worst += [REDEEM_PREFIX + "GG-ZZZZZZ", f"staff:rm:{biggest}"]
     worst += [f"pz:{kind}:{biggest}" for kind in "ctwdoy"] + ["pz:list", "pz:add", "pz:g", "staff:add"]
     worst += [f"pz:{p}:{g}" for p in ("l", "a", "e", "on") for g in ("wheel", "cups", "case")]

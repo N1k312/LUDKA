@@ -117,7 +117,8 @@ async def test_f02_platform_onboarding_to_first_redemption(session, telegram, cl
 # --- F3. Жизненный цикл подписки по датам --------------------------------------------
 
 
-async def test_f03_subscription_lifecycle(session, telegram, client):
+async def test_f03_subscription_lifecycle(session, telegram, client, pbot):
+    """Подписка продлевается сама; не заплатил — владелец отключает доступ в пульте и может вернуть."""
     club, _ = await club_with_bot(session, "Arena", TOKEN_A)
     session.add(Guest(club_id=club.id, telegram_id=GUEST, phone="+77010000000", consent_at=datetime.now(UTC)))
     sub = await session.get(Subscription, club.id)
@@ -129,15 +130,20 @@ async def test_f03_subscription_lifecycle(session, telegram, client):
 
     now = datetime.now(UTC)
     stages = []
-    for trial_end in (now + timedelta(days=1), now - timedelta(days=1), now - timedelta(days=4)):
+    for trial_end in (now + timedelta(days=1), now - timedelta(days=1), now - timedelta(days=40)):
         sub.trial_ends_at = trial_end
         await subscription.refresh_statuses(session)
         stages.append((sub.status, await available()))
+    await pbot.send(nav("access_off_yes", club.id))
+    stages.append(("доступ отключён", await available()))
+    await pbot.send(nav("access_on", club.id))
+    stages.append(("доступ возвращён", await available()))
     await subscription.extend(session, sub, 30, Decimal("15000"), "счёт")
     stages.append((sub.status, await available()))
 
     assert stages == [(SubscriptionStatus.TRIAL, True), (SubscriptionStatus.PAST_DUE, True),
-                      (SubscriptionStatus.CANCELED, False), (SubscriptionStatus.ACTIVE, True)]
+                      (SubscriptionStatus.PAST_DUE, True), ("доступ отключён", False),
+                      ("доступ возвращён", True), (SubscriptionStatus.ACTIVE, True)]
     assert (await session.scalar(select(Payment).where(Payment.club_id == club.id))).amount == 15000
 
 
@@ -287,7 +293,7 @@ async def test_f12_platform_card_reflects_state(session, telegram, pbot):
     await pbot.send(nav("club", club.id))
     card = pbot.texts()[-1]
 
-    for fragment in ("Arena", "@test_club_bot", "trial", "раз в 7 дн.", "призов 2", "сумма весов 100", "Аня"):
+    for fragment in ("Arena", "@test_club_bot", "пробный период", "раз в 7 дн.", "призов 2", "сумма весов 100", "Аня"):
         assert fragment in card, fragment
     assert "⚠️" not in card
 

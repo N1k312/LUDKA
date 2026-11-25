@@ -20,6 +20,7 @@ from app.db import get_session
 from app.main import app
 from app.models import (
     Club,
+    ClubStatus,
     GameConfig,
     GameType,
     Guest,
@@ -225,9 +226,21 @@ async def test_empty_sector_gives_no_code(session, client, telegram):
     assert telegram.of(methods.SendMessage) == []
 
 
-async def test_spin_unavailable_without_subscription(session, client, telegram):
-    club = await make_club(session, "Клуб А", TOKEN_A, [("1 час", 1, False)], trial_days=-4)
+async def test_unpaid_club_still_plays(session, client, telegram):
+    """Подписка продлевается сама: неоплата игры не останавливает."""
+    club = await make_club(session, "Клуб А", TOKEN_A, [("1 час", 1, False)], trial_days=-40)
     await make_guest(session, club)
+
+    response = await client.post("/api/spin", headers=headers(TOKEN_A, BOT_A))
+
+    assert response.status_code == 200
+
+
+async def test_spin_unavailable_when_access_disabled(session, client, telegram):
+    club = await make_club(session, "Клуб А", TOKEN_A, [("1 час", 1, False)])
+    await make_guest(session, club)
+    club.status = ClubStatus.DISABLED
+    await session.flush()
 
     response = await client.post("/api/spin", headers=headers(TOKEN_A, BOT_A))
     me = (await client.get("/api/me", headers=headers(TOKEN_A, BOT_A))).json()

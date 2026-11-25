@@ -6,7 +6,7 @@
 
 | Таблица | Ключ | Важное |
 | --- | --- | --- |
-| `clubs` | id | name, timezone (`Asia/Almaty`), status, `rules_text`, `branding` (JSONB) |
+| `clubs` | id | name, timezone (`Asia/Almaty`), **status** (`active` / `disabled` — доступ отключён владельцем платформы), `rules_text`, `branding` (JSONB) |
 | `club_bots` | **bot_id** (Telegram id бота) | club_id UNIQUE (один бот на клуб), `token_encrypted` (Fernet), `webhook_secret`, status |
 | `club_staff` | id | club_id, telegram_id, role `owner` (= суперадмин клуба) / `admin`, first_name, username. UNIQUE (club_id, telegram_id); частичный UNIQUE «один owner на клуб» |
 | `guests` | id | club_id, telegram_id, username, first_name, phone (`+цифры`), consent_at. UNIQUE (club_id, telegram_id), (club_id, phone), (club_id, id) |
@@ -15,7 +15,7 @@
 | `plays` | id | club_id, guest_id, prize_option_id, played_at |
 | `prize_codes` | **code** (UNIQUE на платформе) | club_id, guest_id, prize_option_id, play_id, title (копия на момент выдачи), expires_at, redeemed_at, redeemed_by (telegram_id) |
 | `redemption_log` | id | club_id, code (без FK — пишутся и несуществующие), admin_id, action `check`/`redeem`, result |
-| `subscriptions` | club_id | status `trial`/`active`/`past_due`/`canceled`, trial_ends_at, current_period_end |
+| `subscriptions` | club_id | status `trial`/`active`/`past_due` («не оплачено», игры работают)/`canceled` (только старая консольная отмена), trial_ends_at, current_period_end |
 | `payments` | id | club_id, amount NUMERIC(12,2) > 0, currency `KZT`, paid_at, comment |
 
 Владельцы платформы в базе не хранятся — `PLATFORM_OWNER_IDS` в `.env`.

@@ -1,14 +1,15 @@
-"""Подписка клуба.
+"""Подписка клуба — учёт оплат. Сама по себе игры не останавливает.
 
-trial (14 дней) → active (оплаченный период) → past_due (отсрочка 3 дня) → canceled.
+trial (14 дней) → active (оплаченный период) → past_due («не оплачено»).
+
+Подписка продлевается автоматически: когда оплаченный срок прошёл, статус становится
+past_due, но игры продолжают работать. Если клуб не платит, владелец платформы
+сам отключает доступ в пульте (clubs.status = disabled) и может вернуть его.
 
 Статус выводится из дат: «оплачено до» — это current_period_end, а если клуб
-ещё ни разу не платил — trial_ends_at. Поэтому решение «можно ли играть»
-верно в любой момент, даже если фоновое обновление статусов ещё не прошло.
-Отмена вручную (canceled) действует, пока суперадмин снова не продлит подписку.
-
-Без подписки колесо не крутится, но данные сохраняются, а выданные промокоды
-по-прежнему можно погасить.
+ещё ни разу не платил — trial_ends_at.
+canceled — только старые отмены (команда cancel-subscription в консоли): играть нельзя,
+пока владелец снова не продлит подписку.
 """
 
 import logging
@@ -23,7 +24,7 @@ from app.models import Payment, Subscription, SubscriptionStatus
 logger = logging.getLogger(__name__)
 
 TRIAL_PERIOD = timedelta(days=14)
-GRACE_PERIOD = timedelta(days=3)
+DUE_SOON = timedelta(days=3)  # «скоро к оплате» в пульте
 PLAYABLE = {SubscriptionStatus.TRIAL, SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE}
 
 
@@ -58,13 +59,15 @@ def compute_status(sub: Subscription, now: datetime) -> SubscriptionStatus:
     if sub.status == SubscriptionStatus.CANCELED:
         return SubscriptionStatus.CANCELED
     until = paid_until(sub)
-    if until is None:
-        return SubscriptionStatus.CANCELED
-    if now < until:
+    if until is not None and now < until:
         return SubscriptionStatus.ACTIVE if sub.current_period_end else SubscriptionStatus.TRIAL
-    if now < until + GRACE_PERIOD:
-        return SubscriptionStatus.PAST_DUE
-    return SubscriptionStatus.CANCELED
+    return SubscriptionStatus.PAST_DUE  # не оплачено — но игры не останавливаются сами
+
+
+def unpaid_days(sub: Subscription, now: datetime) -> int:
+    """Сколько полных дней прошло после «оплачено до» (0 — оплачено)."""
+    until = paid_until(sub)
+    return max(0, (now - until).days) if until and now >= until else 0
 
 
 def allows_play(sub: Subscription | None, now: datetime) -> bool:
@@ -79,7 +82,7 @@ def new_trial(club_id: int, now: datetime | None = None) -> Subscription:
 
 
 async def refresh_statuses(db: AsyncSession, now: datetime | None = None) -> int:
-    """Переводит статусы по датам (trial→past_due→canceled и т. д.). Возвращает число изменений."""
+    """Переводит статусы по датам (trial/active → past_due). Возвращает число изменений."""
     now = now or datetime.now(UTC)
     changed = 0
     for sub in await db.scalars(

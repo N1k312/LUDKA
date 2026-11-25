@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bots.dispatcher import dp
 from app.bots.registry import registry
 from app.db import get_session
-from app.models import MAX_BIGINT, BotStatus, Club, ClubBot, ClubStatus
+from app.models import MAX_BIGINT, BotStatus, Club, ClubBot
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -39,8 +39,10 @@ async def telegram_webhook(
         raise HTTPException(status_code=403)
 
     club = await db.get(Club, club_bot.club_id)
-    if club is None or club.status != ClubStatus.ACTIVE:
+    if club is None:
         return Response(status_code=200)
+    # Клуб с отключённым доступом бот всё равно обслуживает: гости видят «Акция временно
+    # недоступна» (игры закрыты в services/wheel.is_available), админ гасит выданные промокоды.
 
     bot = registry.get(club_bot)
     update = Update.model_validate(await request.json(), context={"bot": bot})

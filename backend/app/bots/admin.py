@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bots.notify import local_datetime
 from app.bots.setup import reset_commands, set_staff_commands
 from app.config import get_settings
-from app.models import Club, ClubStaff, RedemptionResult, StaffRole
+from app.models import Club, ClubStaff, ClubStatus, RedemptionResult, StaffRole
 from app.services import guest_list, stats
 from app.services.guests import is_registered
 from app.services.redemption import FAILED_WINDOW, Outcome, check_code, normalize_code, redeem_code
@@ -199,6 +199,9 @@ async def admin_menu(message: Message, club: Club, role: Role) -> None:
         "",
         "Нажмите «📷 Сканировать QR» или просто отправьте промокод сообщением (например, GG-7K3M9Q).",
     ]
+    if club.status != ClubStatus.ACTIVE:
+        lines[2:2] = ["⏸ <b>Доступ к играм приостановлен владельцем платформы.</b> Гости пока не могут "
+                      "играть, уже выданные промокоды можно гасить.", ""]
     if can_edit_prizes(role):
         lines.append("«🎮 Игры и призы» — включить игры, лимиты, призы и шансы.")
     if can_manage_admins(role):

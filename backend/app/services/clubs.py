@@ -1,6 +1,6 @@
 """Операции суперадмина над клубами — общие для бота платформы и консоли app.cli."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, select, update
@@ -11,6 +11,7 @@ from app.models import (
     Club,
     ClubBot,
     ClubStaff,
+    ClubStatus,
     GameConfig,
     GameType,
     Guest,
@@ -20,6 +21,7 @@ from app.models import (
     RedemptionLog,
     StaffRole,
     Subscription,
+    SubscriptionStatus,
 )
 from app.services import subscription
 
@@ -42,6 +44,26 @@ async def create_club(db: AsyncSession, name: str, timezone: str = DEFAULT_TIMEZ
                           enabled=game == GameType.WHEEL))
     await db.flush()
     return club
+
+
+async def set_access(db: AsyncSession, club: Club, enabled: bool) -> bool:
+    """Доступ клуба к сервису: владелец платформы отключает его (например, за неоплату) и возвращает.
+
+    Отключение ничего не удаляет: бот, гости, призы и промокоды остаются; гости не могут играть.
+    Возврат снимает и старую отмену подписки (canceled), чтобы игры точно заработали.
+    False — состояние и так было таким.
+    """
+    target = ClubStatus.ACTIVE if enabled else ClubStatus.DISABLED
+    changed = club.status != target
+    club.status = target
+    if enabled:
+        sub = await db.get(Subscription, club.id)
+        if sub is not None and sub.status == SubscriptionStatus.CANCELED:
+            sub.status = SubscriptionStatus.PAST_DUE
+            sub.status = subscription.compute_status(sub, datetime.now(UTC))
+            changed = True
+    await db.flush()
+    return changed
 
 
 class GameSettingError(Exception):
