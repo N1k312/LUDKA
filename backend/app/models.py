@@ -86,6 +86,8 @@ class StaffRole(StrEnum):
 
 class GameType(StrEnum):
     WHEEL = "wheel"
+    CUPS = "cups"
+    CASE = "case"
 
 
 class RedemptionAction(StrEnum):

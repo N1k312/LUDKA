@@ -3,7 +3,7 @@
 // ?mock=offline (нет связи). Оформление клуба: &brand=neon|sunset|ocean|forest|gold (+ &logo).
 // В production-сборку не попадает (isMock ложен вне `npm run dev`).
 
-import type { Branding, Me, Prize, Sector, SpinResult } from "./api";
+import type { Branding, Game, GameType, Me, Prize, Sector, SpinResult } from "./api";
 import { ApiError } from "./api";
 
 const params = new URLSearchParams(window.location.search);
@@ -42,16 +42,42 @@ const branding: Branding = {
 };
 
 const sectors: Sector[] = [
-  { id: 1, title: "1 час игры", emoji: "🎮", is_empty: false },
-  { id: 2, title: "Энергетик", emoji: "🥤", is_empty: false },
-  { id: 3, title: "Повезёт в следующий раз", emoji: "😔", is_empty: true },
-  { id: 4, title: "Скидка 10%", emoji: "💸", is_empty: false },
-  { id: 5, title: "2 часа игры", emoji: "🎮", is_empty: false },
-  { id: 6, title: "3 часа игры", emoji: "🏆", is_empty: false },
+  { id: 1, title: "1 час игры", emoji: "🎮", is_empty: false, rarity: "common" },
+  { id: 2, title: "Энергетик", emoji: "🥤", is_empty: false, rarity: "common" },
+  { id: 3, title: "Повезёт в следующий раз", emoji: "😔", is_empty: true, rarity: "empty" },
+  { id: 4, title: "Скидка 10%", emoji: "💸", is_empty: false, rarity: "rare" },
+  { id: 5, title: "2 часа игры", emoji: "🎮", is_empty: false, rarity: "rare" },
+  { id: 6, title: "3 часа игры", emoji: "🏆", is_empty: false, rarity: "legendary" },
 ];
+const cupPrizes: Sector[] = [
+  { id: 11, title: "Чипсы", emoji: "🍟", is_empty: false, rarity: "common" },
+  { id: 12, title: "Кола", emoji: "🥤", is_empty: false, rarity: "common" },
+  { id: 13, title: "Час игры", emoji: "🎮", is_empty: false, rarity: "rare" },
+  { id: 14, title: "Пусто", emoji: null, is_empty: true, rarity: "empty" },
+];
+const casePrizes: Sector[] = [
+  { id: 21, title: "Энергетик", emoji: "⚡", is_empty: false, rarity: "common" },
+  { id: 22, title: "Скидка 20%", emoji: "💸", is_empty: false, rarity: "common" },
+  { id: 23, title: "2 часа игры", emoji: "🎮", is_empty: false, rarity: "rare" },
+  { id: 24, title: "Ночь в VIP", emoji: "👑", is_empty: false, rarity: "legendary" },
+  { id: 25, title: "Пусто", emoji: null, is_empty: true, rarity: "empty" },
+];
+const PRIZES: Record<GameType, Sector[]> = { wheel: sectors, cups: cupPrizes, case: casePrizes };
+const TITLES: Record<GameType, string> = { wheel: "Колесо", cups: "Стаканчики", case: "Кейс" };
+const LOOK = { common: 8, empty: 6, rare: 3, legendary: 1 } as const;
+const draw = (list: Sector[]) => {
+  const total = list.reduce((s, p) => s + LOOK[p.rarity], 0);
+  let r = Math.random() * total;
+  for (const p of list) if ((r -= LOOK[p.rarity]) < 0) return p;
+  return list[0];
+};
 
 const iso = (ms: number) => new Date(ms).toISOString();
-let nextSpinAt: string | null = variant === "cooldown" ? iso(Date.now() + 3 * DAY + 4000) : null;
+const nextAt: Record<GameType, string | null> = {
+  wheel: variant === "cooldown" ? iso(Date.now() + 3 * DAY + 4000) : null,
+  cups: variant === "cooldown" ? iso(Date.now() + 5 * 3600_000) : null,
+  case: null,
+};
 let hasConsent = variant !== "unregistered";
 let hasPhone = variant !== "unregistered";
 
@@ -84,7 +110,7 @@ export async function mockShareContact(): Promise<boolean> {
   return true;
 }
 
-export async function mockFetch<T>(method: string, path: string): Promise<T> {
+export async function mockFetch<T>(method: string, path: string, body?: unknown): Promise<T> {
   await new Promise((r) => setTimeout(r, variant === "slow" ? 2500 : 300));
   if (variant === "offline") throw new ApiError(0, "network", "Нет связи с сервером. Проверьте интернет");
   const key = `${method} ${path}`;
@@ -94,7 +120,10 @@ export async function mockFetch<T>(method: string, path: string): Promise<T> {
       club: { name: brandKey ? "Cyber Arena" : "Тестовый клуб", timezone: "Asia/Almaty" },
       guest: { first_name: "Никита", registered: hasConsent && hasPhone, has_phone: hasPhone, has_consent: hasConsent },
       available: variant !== "unavailable",
-      wheel: { enabled: true, cooldown_seconds: 7 * 24 * 3600, next_spin_at: nextSpinAt },
+      games: (["wheel", "cups", "case"] as GameType[]).map((type): Game => ({
+        type, title: TITLES[type], enabled: true, cooldown_seconds: 7 * 24 * 3600, next_play_at: nextAt[type],
+      })),
+      wheel: { enabled: true, cooldown_seconds: 7 * 24 * 3600, next_spin_at: nextAt.wheel },
       branding,
     };
     return me as T;
@@ -104,6 +133,8 @@ export async function mockFetch<T>(method: string, path: string): Promise<T> {
     return { registered: hasConsent && hasPhone } as T;
   }
   if (key === "GET /wheel") return { sectors } as T;
+  const gameMatch = path.match(/^\/games\/(wheel|cups|case)$/);
+  if (method === "GET" && gameMatch) return { prizes: PRIZES[gameMatch[1] as GameType] } as T;
   if (key === "GET /prizes") return { prizes } as T;
   if (key === "GET /rules") {
     return {
@@ -113,18 +144,24 @@ export async function mockFetch<T>(method: string, path: string): Promise<T> {
         "3. Промокод действует 14 дней с момента выигрыша.\n4. Призы не обмениваются на деньги.",
     } as T;
   }
-  if (key === "POST /spin") {
-    if (nextSpinAt) throw new ApiError(429, "cooldown", "Следующий спин ещё недоступен", nextSpinAt);
-    const sector = sectors[Math.floor(Math.random() * sectors.length)];
-    nextSpinAt = iso(Date.now() + 7 * DAY);
-    const code = sector.is_empty ? null : { code: randomCode(), expires_at: iso(Date.now() + 14 * DAY) };
+  const playMatch = path.match(/^\/play\/(wheel|cups|case)$/);
+  if (method === "POST" && playMatch) {
+    const game = playMatch[1] as GameType;
+    const waitUntil = nextAt[game];
+    if (waitUntil) throw new ApiError(429, "cooldown", "Следующая игра ещё недоступна", waitUntil);
+    const list = PRIZES[game];
+    const choice = (body as { choice?: number } | undefined)?.choice ?? 0;
+    const layout = game === "cups" ? Array.from({ length: 6 }, () => draw(list)) : null;
+    const prize = layout ? layout[choice] : draw(list);
+    nextAt[game] = iso(Date.now() + 7 * DAY);
+    const code = prize.is_empty ? null : { code: randomCode(), expires_at: iso(Date.now() + 14 * DAY) };
     if (code) {
       prizes.unshift({
-        code: code.code, title: sector.title, emoji: sector.emoji, status: "active",
+        code: code.code, title: prize.title, emoji: prize.emoji, status: "active",
         created_at: iso(Date.now()), expires_at: code.expires_at, redeemed_at: null,
       });
     }
-    const result: SpinResult = { sector, code, next_spin_at: nextSpinAt };
+    const result: SpinResult = { prize, layout, code, next_spin_at: nextAt[game]! };
     return result as T;
   }
   throw new ApiError(404, "not_found", "Не найдено");

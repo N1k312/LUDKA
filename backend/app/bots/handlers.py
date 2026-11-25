@@ -49,10 +49,10 @@ router.message.filter(F.chat.type == "private")
 
 
 def play_keyboard(bot_id: int) -> InlineKeyboardMarkup:
-    """«Крутить» — Mini App на колесе, «Мои призы» — сразу на вкладке призов, «Правила» — в чат."""
+    """«Играть» — Mini App на экране игр, «Мои призы» — сразу на вкладке призов, «Правила» — в чат."""
     url = get_settings().webapp_url_for(bot_id)
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎡 Крутить колесо", web_app=WebAppInfo(url=url))],
+        [InlineKeyboardButton(text="🎮 Играть", web_app=WebAppInfo(url=url))],
         [InlineKeyboardButton(text="🎁 Мои призы", web_app=WebAppInfo(url=f"{url}&tab=prizes")),
          InlineKeyboardButton(text="📜 Правила", callback_data=RULES_CALLBACK)],
     ])
@@ -219,7 +219,7 @@ async def rules_button(callback: CallbackQuery, club: Club) -> None:
 async def fallback(message: Message, club: Club, db: AsyncSession) -> None:
     guest = await get_or_create_guest(db, club, message.from_user)
     if is_registered(guest):
-        await message.answer("Нажмите «Крутить колесо», чтобы открыть игру 🎡",
+        await message.answer("Нажмите «Играть», чтобы открыть игры клуба 🎮",
                              reply_markup=play_keyboard(message.bot.id))
     else:
         await continue_registration(message, club, guest)

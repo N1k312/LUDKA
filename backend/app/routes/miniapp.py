@@ -14,8 +14,9 @@ from typing import Annotated
 
 from aiogram import Bot
 from aiogram.utils.web_app import WebAppUser, safe_parse_webapp_init_data
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,17 +25,21 @@ from app.bots.registry import registry
 from app.config import get_settings
 from app.crypto import decrypt
 from app.db import get_session
-from app.models import MAX_BIGINT, BotStatus, Club, ClubBot, Guest, PrizeCode, PrizeOption
+from app.models import MAX_BIGINT, BotStatus, Club, ClubBot, GameType, Guest, PrizeCode, PrizeOption
 from app.services.codes import code_status
-from app.services import branding
+from app.services import branding, clubs
 from app.services.guests import accept_consent, get_or_create_guest, is_registered
+from app.services.prizes import rarity
 from app.services.wheel import (
+    CUPS_COUNT,
+    GAME_TITLES,
+    GAMES,
     SpinError,
+    game_options,
     is_available,
     next_spin_at,
-    spin,
+    play,
     wheel_config,
-    wheel_options,
 )
 
 router = APIRouter(prefix="/api", tags=["miniapp"])
@@ -90,8 +95,24 @@ Context = Annotated[MiniAppContext, Depends(miniapp_context)]
 Db = Annotated[AsyncSession, Depends(get_session)]
 
 
-def option_json(o: PrizeOption) -> dict:
-    return {"id": o.id, "title": o.title, "emoji": o.emoji, "is_empty": o.is_empty}
+def option_json(o: PrizeOption, options: list[PrizeOption]) -> dict:
+    """Приз для гостя: без веса и шанса, только цвет редкости."""
+    return {"id": o.id, "title": o.title, "emoji": o.emoji, "is_empty": o.is_empty, "rarity": rarity(o, options)}
+
+
+async def games_json(db: AsyncSession, ctx: MiniAppContext, registered: bool) -> list[dict]:
+    configs = await clubs.game_configs(db, ctx.club)
+    games = []
+    for game in GAMES:
+        config = configs[game]
+        games.append({
+            "type": game.value,
+            "title": GAME_TITLES[game],
+            "enabled": config.enabled,
+            "cooldown_seconds": config.cooldown_seconds,
+            "next_play_at": await next_spin_at(db, ctx.guest, config) if registered else None,
+        })
+    return games
 
 
 @router.get("/me")
@@ -101,7 +122,10 @@ async def me(ctx: Context, db: Db) -> dict:
     wait_until = (
         await next_spin_at(db, ctx.guest, config) if registered and config is not None else None
     )
+    games = await games_json(db, ctx, registered)
+    await db.commit()  # game_configs мог дописать недостающие настройки
     return {
+        "games": games,
         "club": {"name": ctx.club.name, "timezone": ctx.club.timezone},
         "guest": {
             "first_name": ctx.user.first_name,
@@ -130,20 +154,39 @@ async def consent(ctx: Context, db: Db) -> dict:
     return {"registered": is_registered(guest), "has_consent": True}
 
 
+async def prizes_of(db: AsyncSession, club: Club, game: GameType) -> list[dict]:
+    options = await game_options(db, club.id, game)
+    return [option_json(o, options) for o in options]
+
+
 @router.get("/wheel")
 async def wheel(ctx: Context, db: Db) -> dict:
-    return {"sectors": [option_json(o) for o in await wheel_options(db, ctx.club.id)]}
+    return {"sectors": await prizes_of(db, ctx.club, GameType.WHEEL)}
+
+
+@router.get("/games/{game}")
+async def game_prizes(game: GameType, ctx: Context, db: Db) -> dict:
+    return {"prizes": await prizes_of(db, ctx.club, game)}
+
+
+class PlayRequest(BaseModel):
+    choice: int | None = Field(default=None, ge=0, lt=CUPS_COUNT)
 
 
 @router.post("/spin")
 async def do_spin(ctx: Context, db: Db):
+    return await do_play(GameType.WHEEL, ctx, db)
+
+
+@router.post("/play/{game}")
+async def do_play(game: GameType, ctx: Context, db: Db, body: Annotated[PlayRequest | None, Body()] = None):
     if ctx.guest is None:
         raise api_error(403, "registration_required", "Сначала зарегистрируйтесь в боте")
     try:
-        result = await spin(db, ctx.club, ctx.guest.id)
+        result = await play(db, ctx.club, ctx.guest.id, game, body.choice if body else None)
     except SpinError as e:
         # До отказа ничего не записано; блокировка гостя снимется при закрытии сессии.
-        status = {"cooldown": 429, "registration_required": 403}.get(e.code, 409)
+        status = {"cooldown": 429, "registration_required": 403, "bad_choice": 422}.get(e.code, 409)
         return JSONResponse(
             status_code=status,
             content={
@@ -159,8 +202,12 @@ async def do_spin(ctx: Context, db: Db):
     if result.code is not None:
         await send_prize_code(ctx.bot, ctx.user.id, ctx.club, result.option, result.code)
 
+    options = await game_options(db, ctx.club.id, game)
+    prize = option_json(result.option, options)
     return {
-        "sector": option_json(result.option),
+        "prize": prize,
+        "sector": prize,  # старое имя поля для колеса
+        "layout": [option_json(o, options) for o in result.layout] if result.layout else None,
         "code": (
             {"code": result.code.code, "expires_at": result.code.expires_at}
             if result.code

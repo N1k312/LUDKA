@@ -18,10 +18,24 @@ export interface Branding {
   customized: boolean;
 }
 
+export type GameType = "wheel" | "cups" | "case";
+
+/** Редкость приза — по его доле среди призов игры. Самих шансов сервер не отдаёт. */
+export type Rarity = "legendary" | "rare" | "common" | "empty";
+
+export interface Game {
+  type: GameType;
+  title: string;
+  enabled: boolean;
+  cooldown_seconds: number;
+  next_play_at: string | null;
+}
+
 export interface Me {
   club: { name: string; timezone: string };
   guest: { first_name: string; registered: boolean; has_phone: boolean; has_consent: boolean };
   available: boolean;
+  games: Game[];
   wheel: { enabled: boolean; cooldown_seconds: number | null; next_spin_at: string | null };
   branding: Branding;
 }
@@ -31,10 +45,13 @@ export interface Sector {
   title: string;
   emoji: string | null;
   is_empty: boolean;
+  rarity: Rarity;
 }
 
 export interface SpinResult {
-  sector: Sector;
+  prize: Sector;
+  /** Стаканчики: что было под каждым (выбранный — под индексом выбора). */
+  layout: Sector[] | null;
   code: { code: string; expires_at: string } | null;
   next_spin_at: string;
 }
@@ -67,8 +84,8 @@ const botId = params.get("bot");
 /** Мок-режим: интерфейс без Telegram и бэкенда, только при `npm run dev` и ?mock. */
 export const isMock = import.meta.env.DEV && params.has("mock");
 
-async function request<T>(method: "GET" | "POST", path: string): Promise<T> {
-  if (isMock) return mockFetch<T>(method, path);
+async function request<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+  if (isMock) return mockFetch<T>(method, path, body);
 
   const initData = tg?.initData;
   if (!initData || !botId) {
@@ -78,14 +95,19 @@ async function request<T>(method: "GET" | "POST", path: string): Promise<T> {
   try {
     response = await fetch(`/api${path}`, {
       method,
-      headers: { Authorization: `tma ${initData}`, "X-Bot-Id": botId },
+      headers: {
+        Authorization: `tma ${initData}`,
+        "X-Bot-Id": botId,
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
     throw new ApiError(0, "network", "Нет связи с сервером. Проверьте интернет");
   }
-  const body = await response.json().catch(() => ({}));
+  const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const d = body?.detail ?? {};
+    const d = data?.detail ?? {};
     throw new ApiError(
       response.status,
       d.code ?? "error",
@@ -93,13 +115,14 @@ async function request<T>(method: "GET" | "POST", path: string): Promise<T> {
       d.next_spin_at ?? null,
     );
   }
-  return body as T;
+  return data as T;
 }
 
 export const api = {
   me: () => request<Me>("GET", "/me"),
-  wheel: () => request<{ sectors: Sector[] }>("GET", "/wheel").then((r) => r.sectors),
-  spin: () => request<SpinResult>("POST", "/spin"),
+  prizesOf: (game: GameType) => request<{ prizes: Sector[] }>("GET", `/games/${game}`).then((r) => r.prizes),
+  play: (game: GameType, choice?: number) =>
+    request<SpinResult>("POST", `/play/${game}`, choice === undefined ? undefined : { choice }),
   prizes: () => request<{ prizes: Prize[] }>("GET", "/prizes").then((r) => r.prizes),
   rules: () => request<{ club: string; rules: string | null }>("GET", "/rules"),
   consent: () => request<{ registered: boolean }>("POST", "/consent"),

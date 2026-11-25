@@ -50,6 +50,7 @@ from tests.test_miniapp import init_data
 ROOT = Path(__file__).resolve().parents[3]
 GUEST, OTHER_GUEST, ADMIN, SUPER, STRANGER = 555, 556, 1001, 1002, 4242
 ENDPOINTS = [("GET", "/api/me"), ("GET", "/api/wheel"), ("POST", "/api/spin"), ("POST", "/api/consent"),
+             ("GET", "/api/games/wheel"), ("GET", "/api/games/cups"), ("POST", "/api/play/case"),
              ("GET", "/api/prizes"), ("GET", "/api/rules")]
 
 

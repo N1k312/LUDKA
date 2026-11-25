@@ -27,16 +27,50 @@ DEFAULT_TIMEZONE = "Asia/Almaty"
 
 
 async def create_club(db: AsyncSession, name: str, timezone: str = DEFAULT_TIMEZONE) -> Club:
-    """Клуб с пробным периодом и колесом (раз в 7 дней), без призов."""
+    """Клуб с пробным периодом и тремя играми (раз в 7 дней), без призов.
+
+    Колесо включено, стаканчики и кейс выключены: клуб включает их, когда добавит призы.
+    """
     ZoneInfo(timezone)  # неверный часовой пояс — ошибка сразу, а не при показе дат
     club = Club(name=name.strip(), timezone=timezone)
     db.add(club)
     await db.flush()
     db.add(subscription.new_trial(club.id))
-    db.add(GameConfig(club_id=club.id, game_type=GameType.WHEEL,
-                      cooldown_seconds=WHEEL_COOLDOWN_SECONDS))
+    for game in GameType:
+        db.add(GameConfig(club_id=club.id, game_type=game, cooldown_seconds=WHEEL_COOLDOWN_SECONDS,
+                          enabled=game == GameType.WHEEL))
     await db.flush()
     return club
+
+
+class GameSettingError(Exception):
+    """Понятная причина отказа для ответа в боте."""
+
+
+async def game_configs(db: AsyncSession, club: Club) -> dict[GameType, GameConfig]:
+    """Настройки всех игр клуба; недостающие строки создаются (выключенными)."""
+    rows = {GameType(c.game_type): c for c in await db.scalars(
+        select(GameConfig).where(GameConfig.club_id == club.id))}
+    for game in GameType:
+        if game not in rows:
+            rows[game] = GameConfig(club_id=club.id, game_type=game, cooldown_seconds=WHEEL_COOLDOWN_SECONDS,
+                                    enabled=False)
+            db.add(rows[game])
+    await db.flush()
+    return {game: rows[game] for game in GameType}
+
+
+async def set_game_enabled(db: AsyncSession, club: Club, game: GameType, enabled: bool) -> GameConfig:
+    configs = await game_configs(db, club)
+    if enabled:
+        prizes = await active_prizes(db, club, game)
+        if not any(p.weight > 0 and not p.is_empty for p in prizes):
+            raise GameSettingError("Сначала добавьте в эту игру хотя бы один приз с промокодом.")
+    elif not any(c.enabled for g, c in configs.items() if g != game):
+        raise GameSettingError("Хотя бы одна игра должна оставаться включённой.")
+    configs[game].enabled = enabled
+    await db.flush()
+    return configs[game]
 
 
 async def add_prize(
@@ -47,6 +81,7 @@ async def add_prize(
     emoji: str | None = None,
     is_empty: bool = False,
     ttl_days: int = 14,
+    game: GameType = GameType.WHEEL,
 ) -> PrizeOption:
     position = await db.scalar(
         select(func.coalesce(func.max(PrizeOption.position) + 1, 0)).where(
@@ -54,7 +89,7 @@ async def add_prize(
         )
     )
     prize = PrizeOption(
-        club_id=club.id, game_type=GameType.WHEEL, title=title.strip(), emoji=emoji,
+        club_id=club.id, game_type=game, title=title.strip(), emoji=emoji,
         weight=weight, is_empty=is_empty, ttl_days=ttl_days, position=position,
     )
     db.add(prize)
@@ -62,18 +97,18 @@ async def add_prize(
     return prize
 
 
-async def active_prizes(db: AsyncSession, club: Club) -> list[PrizeOption]:
+async def active_prizes(db: AsyncSession, club: Club, game: GameType = GameType.WHEEL) -> list[PrizeOption]:
     return list(await db.scalars(
         select(PrizeOption)
-        .where(PrizeOption.club_id == club.id, PrizeOption.active.is_(True))
+        .where(PrizeOption.club_id == club.id, PrizeOption.game_type == game, PrizeOption.active.is_(True))
         .order_by(PrizeOption.position, PrizeOption.id)
     ))
 
 
-async def set_cooldown(db: AsyncSession, club: Club, seconds: int) -> GameConfig:
-    config = await db.get(GameConfig, (club.id, GameType.WHEEL))
+async def set_cooldown(db: AsyncSession, club: Club, seconds: int, game: GameType = GameType.WHEEL) -> GameConfig:
+    config = await db.get(GameConfig, (club.id, game))
     if config is None:
-        config = GameConfig(club_id=club.id, game_type=GameType.WHEEL)
+        config = GameConfig(club_id=club.id, game_type=game, enabled=game == GameType.WHEEL)
         db.add(config)
     config.cooldown_seconds = seconds
     await db.flush()

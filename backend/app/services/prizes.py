@@ -9,8 +9,26 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import MAX_BIGINT, Club, PrizeOption
+from app.models import MAX_BIGINT, Club, GameType, PrizeOption
 from app.services import clubs
+
+# Редкость приза для гостя — по его доле среди призов игры. Самих шансов гость не видит.
+LEGENDARY_SHARE = 0.05  # до 5% — красный, «очень редкий»
+RARE_SHARE = 0.20       # до 20% — синий, «редкий»; дальше зелёный, «обычный»
+RARITY_TITLES = {"legendary": "очень редкий", "rare": "редкий", "common": "обычный", "empty": "пусто"}
+RARITY_MARKS = {"legendary": "🔴", "rare": "🔵", "common": "🟢", "empty": "⚪"}
+
+
+def rarity(prize: PrizeOption, prizes: list[PrizeOption]) -> str:
+    if prize.is_empty:
+        return "empty"
+    total = sum(p.weight for p in prizes)
+    share = prize.weight / total if total else 0
+    if share <= LEGENDARY_SHARE:
+        return "legendary"
+    if share <= RARE_SHARE:
+        return "rare"
+    return "common"
 
 MAX_SECTORS = 12
 MAX_WEIGHT = 100_000
@@ -109,12 +127,12 @@ async def get_active(db: AsyncSession, club: Club, prize_id: int) -> PrizeOption
 
 async def create(
     db: AsyncSession, club: Club, emoji: str | None, title: str, weight: int,
-    is_empty: bool, ttl_days: int = DEFAULT_TTL_DAYS,
+    is_empty: bool, ttl_days: int = DEFAULT_TTL_DAYS, game: GameType = GameType.WHEEL,
 ) -> tuple[PrizeOption, str]:
     await _lock_club(db, club)
-    if len(await clubs.active_prizes(db, club)) >= MAX_SECTORS:
-        raise PrizeError(f"На колесе максимум {MAX_SECTORS} секторов. Сначала выключите лишний.")
-    prize = await clubs.add_prize(db, club, title, weight, emoji, is_empty=is_empty, ttl_days=ttl_days)
+    if len(await clubs.active_prizes(db, club, game)) >= MAX_SECTORS:
+        raise PrizeError(f"В игре максимум {MAX_SECTORS} призов. Сначала выключите лишний.")
+    prize = await clubs.add_prize(db, club, title, weight, emoji, is_empty=is_empty, ttl_days=ttl_days, game=game)
     kind = "пустой сектор" if is_empty else f"приз, срок {ttl_days} дн."
     return prize, f"добавлен «{label(prize)}» ({kind}), шанс {weight}"
 
@@ -135,7 +153,7 @@ async def set_weight(db: AsyncSession, club: Club, prize_id: int, text: str) -> 
     prize = await get_active(db, club, prize_id)
     before, prize.weight = prize.weight, weight
     await db.flush()
-    return prize, f"«{label(prize)}»: шанс {before} → {weight} ({chance(prize, await clubs.active_prizes(db, club))})"
+    return prize, f"«{label(prize)}»: шанс {before} → {weight} ({chance(prize, await clubs.active_prizes(db, club, prize.game_type))})"
 
 
 async def set_ttl(db: AsyncSession, club: Club, prize_id: int, text: str) -> tuple[PrizeOption, str]:
@@ -153,12 +171,12 @@ async def disable(db: AsyncSession, club: Club, prize_id: int) -> tuple[PrizeOpt
     """Выключает сектор. Строка остаётся: на неё ссылаются прошлые игры и промокоды."""
     await _lock_club(db, club)
     prize = await get_active(db, club, prize_id)
-    rest = [p for p in await clubs.active_prizes(db, club) if p.id != prize.id and p.weight > 0]
+    rest = [p for p in await clubs.active_prizes(db, club, prize.game_type) if p.id != prize.id and p.weight > 0]
     if prize.weight > 0:
         if not rest:
-            raise PrizeError("Нельзя выключить последний сектор: колесо останется пустым.")
+            raise PrizeError("Нельзя выключить последний приз игры: она останется пустой.")
         if not prize.is_empty and all(p.is_empty for p in rest):
-            raise PrizeError("Нельзя выключить последний приз: на колесе останутся только пустые сектора.")
+            raise PrizeError("Нельзя выключить последний приз с промокодом: останутся только пустые.")
     prize.active = False
     await db.flush()
     return prize, f"выключен «{label(prize)}»"

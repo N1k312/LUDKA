@@ -35,6 +35,9 @@ interface TelegramWebApp {
   requestContact?(callback?: (shared: boolean) => void): void;
   /** Полноэкранный режим (Bot API 8.0+). */
   requestFullscreen?(): void;
+  setHeaderColor?(color: string): void;
+  setBackgroundColor?(color: string): void;
+  setBottomBarColor?(color: string): void;
   onEvent(event: string, handler: () => void): void;
   offEvent(event: string, handler: () => void): void;
   MainButton: BottomButton;
@@ -67,6 +70,20 @@ export const haptic = {
 };
 
 export const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+
+/** Шапка и фон Telegram — в цвет тёмного интерфейса (у старых клиентов просто ничего не меняется). */
+export function paintTelegram(color: string): void {
+  if (!inTelegram) return;
+  try {
+    if (tg!.isVersionAtLeast("6.1")) {
+      tg!.setHeaderColor?.(color);
+      tg!.setBackgroundColor?.(color);
+    }
+    if (tg!.isVersionAtLeast("7.10")) tg!.setBottomBarColor?.(color);
+  } catch {
+    /* клиент не поддерживает — оставляем его цвета */
+  }
+}
 
 /** На телефоне — полноэкранный режим; на компьютере остаётся обычное окно. */
 export function goFullscreen(): void {

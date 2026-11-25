@@ -1,9 +1,10 @@
 // Колесо фортуны на SVG. Результат приходит с сервера, колесо лишь докручивается до него.
-// Цвета и надпись в центре — из оформления клуба. В покое колесо медленно вращается
-// (кроме режима «уменьшить движение»).
+// Цвет сектора — редкость приза; обод и надпись в центре — из оформления клуба.
+// В покое колесо медленно вращается (кроме режима «уменьшить движение»).
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import type { Sector } from "./api";
+import { RARITY_FILL, rarityOf } from "./rarity";
 import { tick as soundTick } from "./sound";
 import { haptic, reducedMotion } from "./telegram";
 
@@ -130,7 +131,6 @@ export const Wheel = forwardRef<WheelHandle, Props>(function Wheel({ sectors, co
     },
   }));
 
-  let colorIndex = 0;
   const hubFont = hubLabel.length <= 2 ? 12 : 9;
   return (
     <svg className="wheel" viewBox="-112 -118 224 230" role="img" aria-label="Колесо фортуны">
@@ -138,11 +138,11 @@ export const Wheel = forwardRef<WheelHandle, Props>(function Wheel({ sectors, co
       <g ref={groupRef}>
         {sectors.map((s, i) => {
           const center = i * step;
-          const fill = s.is_empty ? colors.empty : colors.wheel[colorIndex++ % colors.wheel.length];
+          const fill = RARITY_FILL[rarityOf(s)][i % 2];
           const lines = wrap(s.title);
           return (
             <g key={s.id}>
-              <path d={sectorPath(center, step)} fill={fill} stroke="rgba(255,255,255,0.85)" strokeWidth="1.2" />
+              <path d={sectorPath(center, step)} fill={fill} stroke="#0f111a" strokeWidth="1.6" />
               <g transform={`rotate(${center})`}>
                 <text y={-78} className="wheel-emoji">{s.emoji ?? "🎁"}</text>
                 <text y={-58} className="wheel-label">
@@ -159,8 +159,8 @@ export const Wheel = forwardRef<WheelHandle, Props>(function Wheel({ sectors, co
         const [x, y] = point(i * step + step / 2, RADIUS + 4);
         return <circle key={i} cx={x} cy={y} r={2} className="wheel-bulb" />;
       })}
-      <circle r={16} className="wheel-hub" stroke={colors.rim} />
-      <text y={hubFont / 2.6} className="wheel-hub-text" fill={colors.rim} style={{ fontSize: hubFont }}>
+      <circle r={16} className="wheel-hub" style={{ stroke: "var(--accent)" }} />
+      <text y={hubFont / 2.6} className="wheel-hub-text" fill="#ffffff" style={{ fontSize: hubFont }}>
         {hubLabel}
       </text>
       <path d="M-10 -116 L10 -116 L0 -94 Z" className="wheel-pointer" />

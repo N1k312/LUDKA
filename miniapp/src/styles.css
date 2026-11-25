@@ -1,25 +1,23 @@
-/* Цвета берутся из темы Telegram (переменные ставит telegram-web-app.js),
-   вне Telegram — запасные значения для светлой и тёмной темы. */
+/* Тёмный игровой интерфейс. Не зависит от темы Telegram: всегда тёмный,
+   акцент — цвет клуба (--accent ставит App из оформления клуба).
+   Цвет редкости приза: красный — очень редкий, синий — редкий, зелёный — обычный. */
 :root {
-  --bg: var(--tg-theme-bg-color, #ffffff);
-  --bg2: var(--tg-theme-secondary-bg-color, #f1f2f6);
-  --text: var(--tg-theme-text-color, #14161c);
-  --hint: var(--tg-theme-hint-color, #7d8392);
-  --accent: var(--tg-theme-button-color, #7c5cff);
-  --accent-text: var(--tg-theme-button-text-color, #ffffff);
-  --danger: #ef4444;
-  --success: #16a34a;
-  --radius: 16px;
-  color-scheme: light dark;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: var(--tg-theme-bg-color, #17212b);
-    --bg2: var(--tg-theme-secondary-bg-color, #232e3c);
-    --text: var(--tg-theme-text-color, #f5f5f5);
-    --hint: var(--tg-theme-hint-color, #8b97a5);
-  }
+  --bg: #090a10;
+  --bg2: #141722;
+  --bg3: #1c2030;
+  --line: rgba(255, 255, 255, 0.07);
+  --text: #f3f2fa;
+  --hint: #8f8daa;
+  --accent: #7c5cff;
+  --accent-text: #ffffff;
+  --danger: #ff4d5e;
+  --success: #22c55e;
+  --radius: 20px;
+  --r-legendary: #ff3d5a;
+  --r-rare: #3b82ff;
+  --r-common: #22c55e;
+  --r-empty: #5b6078;
+  color-scheme: dark;
 }
 
 * {
@@ -29,10 +27,19 @@
 html,
 body {
   margin: 0;
+  min-height: 100%;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background:
+    radial-gradient(900px 520px at 50% -180px, color-mix(in srgb, var(--accent) 26%, transparent), transparent 70%),
+    radial-gradient(600px 400px at 110% 40%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 70%),
+    var(--bg);
+  background-attachment: fixed;
 }
 
 button {
@@ -42,7 +49,8 @@ button {
 
 h2 {
   margin: 8px 0;
-  font-size: 20px;
+  font-size: 22px;
+  letter-spacing: -0.2px;
 }
 
 .screen {
@@ -51,14 +59,24 @@ h2 {
   flex-direction: column;
   max-width: 480px;
   margin: 0 auto;
+  padding-top: calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px));
 }
 
+/* --- Шапка --- */
 .header {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 14px 16px 4px;
+  gap: 10px;
+  padding: 14px 18px 6px;
+}
+
+.logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  object-fit: cover;
+  border: 1px solid var(--line);
 }
 
 .club-name {
@@ -66,23 +84,39 @@ h2 {
   font-size: 17px;
 }
 
+.header-sub {
+  color: var(--hint);
+  font-size: 13px;
+}
+
 .badge {
   font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 6px;
-  background: var(--bg2);
+  padding: 2px 7px;
+  border-radius: 7px;
+  background: var(--bg3);
   color: var(--hint);
+}
+
+.icon-button {
+  margin-left: auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg2);
+  font-size: 17px;
+  cursor: pointer;
 }
 
 .content {
   flex: 1;
-  padding: 8px 16px 96px;
+  padding: 8px 16px 120px;
 }
 
 .muted {
   color: var(--hint);
   font-size: 14px;
-  line-height: 1.4;
+  line-height: 1.45;
 }
 
 .error-text {
@@ -94,31 +128,214 @@ h2 {
 .button {
   display: block;
   width: 100%;
-  padding: 14px 16px;
+  padding: 15px 16px;
   border: 0;
-  border-radius: 12px;
-  background: var(--accent);
+  border-radius: 16px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 100%, #fff 12%), var(--accent));
   color: var(--accent-text);
-  font-weight: 600;
+  font-weight: 700;
   font-size: 16px;
   cursor: pointer;
   margin-top: 12px;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 35%, transparent);
+  transition: transform 0.12s ease;
+}
+
+.button:active {
+  transform: scale(0.98);
 }
 
 .button:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: default;
+  box-shadow: none;
 }
 
 .button-secondary {
-  background: var(--bg2);
+  background: var(--bg3);
   color: var(--text);
+  box-shadow: none;
+  border: 1px solid var(--line);
 }
 
 .button-spin {
   font-size: 18px;
+  padding: 17px;
+}
+
+.back-link {
+  border: 0;
+  background: none;
+  color: var(--hint);
+  font-size: 14px;
+  padding: 4px 0 10px;
+  cursor: pointer;
+}
+
+/* --- Лобби игр --- */
+.hero {
+  margin: 6px 2px 16px;
+}
+
+.hero h2 {
+  margin: 0;
+  font-size: 26px;
+}
+
+.games {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.game-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
   padding: 16px;
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 24px;
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(260px 140px at 0% 0%, color-mix(in srgb, var(--game) 30%, transparent), transparent 70%),
+    var(--bg2);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.game-card:active {
+  transform: scale(0.985);
+}
+
+.game-card:disabled {
+  cursor: default;
+}
+
+.game-art {
+  flex: 0 0 64px;
+  height: 64px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34px;
+  background: color-mix(in srgb, var(--game) 22%, var(--bg3));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--game) 45%, transparent),
+    0 10px 30px color-mix(in srgb, var(--game) 25%, transparent);
+}
+
+.game-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.game-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.game-sub {
+  color: var(--hint);
+  font-size: 13px;
+}
+
+.pill {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.pill-ready {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: #6ee7a0;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--success) 25%, transparent);
+}
+
+.pill-wait {
+  background: var(--bg3);
+  color: var(--hint);
+}
+
+.legend {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 18px;
+  color: var(--hint);
+  font-size: 12px;
+}
+
+.legend span::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--r);
+  box-shadow: 0 0 8px var(--r);
+}
+
+/* --- Редкость --- */
+.rarity-legendary { --r: var(--r-legendary); }
+.rarity-rare { --r: var(--r-rare); }
+.rarity-common { --r: var(--r-common); }
+.rarity-empty { --r: var(--r-empty); }
+
+.rarity-tag {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+  color: var(--r);
+  background: color-mix(in srgb, var(--r) 16%, transparent);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--r) 30%, transparent);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 6px 0 14px;
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border-radius: 12px;
+  font-size: 13px;
+  background: color-mix(in srgb, var(--r) 10%, var(--bg2));
+  border: 1px solid color-mix(in srgb, var(--r) 45%, transparent);
+}
+
+/* --- Экран игры --- */
+.game-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.game-screen > h2 {
+  text-align: center;
+}
+
+.game-hint {
+  text-align: center;
+  margin: 0 0 6px;
 }
 
 /* --- Колесо --- */
@@ -133,10 +350,7 @@ h2 {
   height: auto;
   margin: 4px 0 8px;
   overflow: visible;
-}
-
-.wheel-rim {
-  fill: #232733;
+  filter: drop-shadow(0 18px 40px color-mix(in srgb, var(--accent) 30%, transparent));
 }
 
 .wheel-bulb {
@@ -155,13 +369,12 @@ h2 {
   fill: #ffffff;
   text-anchor: middle;
   paint-order: stroke;
-  stroke: rgba(0, 0, 0, 0.25);
+  stroke: rgba(0, 0, 0, 0.35);
   stroke-width: 1.5px;
 }
 
 .wheel-hub {
-  fill: #ffffff;
-  stroke: #232733;
+  fill: #0f111a;
   stroke-width: 4;
 }
 
@@ -169,22 +382,185 @@ h2 {
   font-size: 12px;
   font-weight: 800;
   text-anchor: middle;
-  fill: #232733;
 }
 
 .wheel-pointer {
-  fill: #ff3b5c;
-  stroke: #ffffff;
+  fill: #ffffff;
+  stroke: var(--accent);
   stroke-width: 2;
   stroke-linejoin: round;
 }
 
+/* --- Стаканчики --- */
+.cups {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 74px 12px;
+  margin: 72px 0 10px;
+}
+
+.cup {
+  position: relative;
+  height: 118px;
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.cup:disabled {
+  cursor: default;
+}
+
+.cup-prize {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 0;
+  height: 62px;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: 11px;
+  line-height: 1.15;
+  text-align: center;
+  padding: 4px;
+  background: color-mix(in srgb, var(--r) 18%, var(--bg2));
+  border: 1px solid color-mix(in srgb, var(--r) 60%, transparent);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--r) 40%, transparent);
+  opacity: 0;
+  transition: opacity 0.3s ease 0.15s;
+}
+
+.cup-prize b {
+  font-size: 22px;
+}
+
+.cup-body {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 112px;
+  display: flex;
+  justify-content: center;
+  transition: transform 0.55s cubic-bezier(0.2, 0.9, 0.25, 1.25);
+  z-index: 2;
+}
+
+.cup-body svg {
+  height: 100%;
+  width: auto;
+  filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.55));
+}
+
+.cup:not(:disabled):hover .cup-body {
+  transform: translateY(-4px);
+}
+
+.cup-up .cup-body {
+  transform: translateY(-70px) rotate(-8deg);
+}
+
+.cup-up .cup-prize {
+  opacity: 1;
+}
+
+.cup-chosen .cup-prize {
+  outline: 2px solid var(--text);
+  outline-offset: 3px;
+}
+
+.cups-floor {
+  width: 100%;
+  height: 10px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(255, 255, 255, 0.08), transparent);
+}
+
+/* --- Кейс --- */
+.case-box {
+  font-size: 86px;
+  margin: 20px 0 6px;
+  filter: drop-shadow(0 16px 40px color-mix(in srgb, var(--accent) 45%, transparent));
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  50% { transform: translateY(-8px); }
+}
+
+.reel {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 20px;
+  padding: 14px 0;
+  margin: 14px 0 6px;
+  background: #06070b;
+  border: 1px solid var(--line);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+}
+
+.reel-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 3px;
+  transform: translateX(-1.5px);
+  background: var(--accent);
+  box-shadow: 0 0 16px var(--accent);
+  z-index: 2;
+  border-radius: 2px;
+}
+
+.reel-strip {
+  display: flex;
+  will-change: transform;
+}
+
+.reel-item {
+  flex: 0 0 92px;
+  height: 108px;
+  margin-right: 8px;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px;
+  font-size: 11px;
+  line-height: 1.15;
+  text-align: center;
+  background:
+    radial-gradient(80px 60px at 50% 100%, color-mix(in srgb, var(--r) 38%, transparent), transparent 75%),
+    var(--bg3);
+  border-bottom: 4px solid var(--r);
+}
+
+.reel-item b {
+  font-size: 30px;
+}
+
+.reel-win {
+  box-shadow: 0 0 0 2px var(--r), 0 0 30px color-mix(in srgb, var(--r) 60%, transparent);
+}
+
+/* --- Таймер --- */
 .cooldown {
   width: 100%;
   margin-top: 12px;
-  padding: 14px;
+  padding: 16px;
   border-radius: var(--radius);
   background: var(--bg2);
+  border: 1px solid var(--line);
   text-align: center;
 }
 
@@ -194,17 +570,19 @@ h2 {
 }
 
 .cooldown-timer {
-  font-size: 26px;
-  font-weight: 700;
+  font-size: 30px;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
   margin-top: 4px;
+  letter-spacing: 0.5px;
 }
 
 /* --- Окно результата --- */
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(3, 4, 8, 0.72);
+  backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -214,23 +592,27 @@ h2 {
 }
 
 .modal {
+  position: relative;
   width: 100%;
   max-width: 360px;
-  background: var(--bg);
-  border-radius: 20px;
-  padding: 24px 20px 20px;
+  background:
+    radial-gradient(320px 180px at 50% 0%, color-mix(in srgb, var(--r, var(--accent)) 30%, transparent), transparent 75%),
+    var(--bg2);
+  border: 1px solid color-mix(in srgb, var(--r, var(--accent)) 40%, var(--line));
+  border-radius: 26px;
+  padding: 26px 20px 20px;
   text-align: center;
-  animation: pop 0.3s cubic-bezier(0.2, 1.4, 0.4, 1);
+  animation: pop 0.35s cubic-bezier(0.2, 1.4, 0.4, 1);
 }
 
 .modal-emoji {
-  font-size: 56px;
+  font-size: 60px;
 }
 
 .modal-prize {
-  font-size: 18px;
-  font-weight: 600;
-  margin: 4px 0 12px;
+  font-size: 20px;
+  font-weight: 700;
+  margin: 8px 0 12px;
 }
 
 .code {
@@ -239,9 +621,18 @@ h2 {
   font-weight: 700;
   letter-spacing: 2px;
   padding: 12px;
-  border-radius: 12px;
-  background: var(--bg2);
+  border-radius: 14px;
+  background: var(--bg3);
+  border: 1px dashed color-mix(in srgb, var(--text) 25%, transparent);
   user-select: all;
+}
+
+.modal-note {
+  margin: 0 0 12px;
+}
+
+.modal .button + .button {
+  margin-top: 8px;
 }
 
 @keyframes fade {
@@ -250,6 +641,14 @@ h2 {
 
 @keyframes pop {
   from { transform: scale(0.85); opacity: 0; }
+}
+
+.confetti {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
 /* --- Мои призы --- */
@@ -264,13 +663,14 @@ h2 {
 
 .prize {
   background: var(--bg2);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 12px 14px;
+  padding: 14px;
 }
 
 .prize-expired,
 .prize-redeemed {
-  opacity: 0.6;
+  opacity: 0.55;
 }
 
 .prize-head {
@@ -290,7 +690,14 @@ h2 {
 }
 
 .prize-emoji {
-  font-size: 28px;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  background: var(--bg3);
 }
 
 .prize-main {
@@ -301,7 +708,7 @@ h2 {
 }
 
 .prize-title {
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .prize-code {
@@ -313,14 +720,11 @@ h2 {
 .prize-meta {
   color: var(--hint);
   font-size: 13px;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
-.prize-qr {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-top: 12px;
+.prize-soon {
+  color: var(--danger);
 }
 
 .qr {
@@ -331,27 +735,72 @@ h2 {
 
 .status {
   font-size: 12px;
-  font-weight: 600;
-  padding: 4px 8px;
-  border-radius: 8px;
+  font-weight: 700;
+  padding: 5px 9px;
+  border-radius: 999px;
   white-space: nowrap;
 }
 
 .status-active {
   background: color-mix(in srgb, var(--success) 18%, transparent);
-  color: var(--success);
+  color: #6ee7a0;
 }
 
 .status-redeemed,
 .status-expired {
-  background: color-mix(in srgb, var(--hint) 18%, transparent);
+  background: var(--bg3);
   color: var(--hint);
 }
 
+/* QR для админа — светлый, чтобы сканер уверенно читал код. */
+.qr-backdrop {
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.qr-sheet {
+  width: 100%;
+  max-width: 380px;
+  background: #ffffff;
+  color: #14161c;
+  border-radius: 24px;
+  padding: 20px;
+  text-align: center;
+  animation: pop 0.25s ease-out;
+}
+
+.qr-sheet .qr {
+  width: min(280px, 72vw);
+  height: auto;
+  padding: 0;
+}
+
+.qr-title {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.qr-code {
+  background: #f1f2f6;
+  color: #14161c;
+  border-color: #d6d8e0;
+  margin: 10px 0;
+}
+
+.qr-sheet .muted {
+  color: #5b6475;
+}
+
 /* --- Правила, заглушки --- */
+.rules {
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 4px 18px 10px;
+}
+
 .rules-text {
   white-space: pre-line;
-  line-height: 1.55;
+  line-height: 1.6;
 }
 
 .notice {
@@ -373,7 +822,7 @@ h2 {
   height: 36px;
   margin: 80px auto;
   border-radius: 50%;
-  border: 3px solid var(--bg2);
+  border: 3px solid var(--bg3);
   border-top-color: var(--accent);
   animation: spin 0.8s linear infinite;
 }
@@ -382,33 +831,38 @@ h2 {
   to { transform: rotate(360deg); }
 }
 
-/* --- Нижние вкладки --- */
+/* --- Нижнее меню: плавающая стеклянная панель --- */
 .tabs {
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  left: 50%;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: min(calc(100% - 24px), 456px);
   display: flex;
-  justify-content: center;
   gap: 4px;
-  padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
-  background: var(--bg);
-  border-top: 1px solid var(--bg2);
+  padding: 6px;
+  border-radius: 24px;
+  background: rgba(20, 23, 34, 0.82);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  z-index: 5;
 }
 
 .tab {
   flex: 1;
-  max-width: 150px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  padding: 6px 0;
+  padding: 8px 0;
   border: 0;
-  border-radius: 10px;
+  border-radius: 18px;
   background: none;
   color: var(--hint);
   font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -417,42 +871,11 @@ h2 {
 }
 
 .tab-active {
-  color: var(--accent);
-  background: var(--bg2);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
-/* --- Этап 1.5: оформление, регистрация, QR, скелетоны ------------------------------- */
-
-.screen {
-  /* Полноэкранный режим Telegram: не заезжаем под вырезы и системные кнопки. */
-  padding-top: calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px));
-}
-
-.logo {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  object-fit: cover;
-}
-
-.icon-button {
-  border: 0;
-  background: none;
-  font-size: 18px;
-  padding: 4px;
-  cursor: pointer;
-  margin-left: auto;
-}
-
-.header {
-  position: relative;
-}
-
-.header .icon-button {
-  position: absolute;
-  right: 12px;
-}
-
+/* --- Регистрация --- */
 .register h2 {
   text-align: center;
 }
@@ -464,8 +887,9 @@ h2 {
 
 .step {
   background: var(--bg2);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 14px;
+  padding: 16px;
   margin-top: 12px;
 }
 
@@ -477,12 +901,12 @@ h2 {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .step-num {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
@@ -500,71 +924,20 @@ h2 {
   margin-top: 8px;
 }
 
-.modal-note {
-  margin: 0 0 12px;
-}
-
-.modal .button + .button {
-  margin-top: 8px;
-}
-
-.confetti {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
-
-.qr-backdrop {
-  background: rgba(0, 0, 0, 0.75);
-}
-
-.qr-sheet {
-  width: 100%;
-  max-width: 380px;
-  background: #ffffff;
-  color: #14161c;
-  border-radius: 20px;
-  padding: 20px;
-  text-align: center;
-  animation: pop 0.25s ease-out;
-}
-
-.qr-sheet .qr {
-  width: min(280px, 72vw);
-  height: auto;
-  padding: 0;
-}
-
-.qr-title {
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-
-.qr-code {
-  background: #f1f2f6;
-  margin: 10px 0;
-}
-
-.qr-sheet .muted {
-  color: #5b6475;
-}
-
-.prize-soon {
-  color: var(--danger);
-}
-
-/* Скелетоны вместо крутилки при загрузке */
+/* --- Скелетоны --- */
 .sk {
   background: var(--bg2);
-  border-radius: 12px;
+  border-radius: 20px;
   animation: shimmer 1.2s ease-in-out infinite;
 }
 
 .sk-title {
   width: 140px;
   height: 18px;
+}
+
+.sk-card {
+  height: 96px;
 }
 
 .sk-wheel {
@@ -580,12 +953,8 @@ h2 {
   margin-top: 12px;
 }
 
-.sk-card {
-  height: 72px;
-}
-
 @keyframes shimmer {
-  50% { opacity: 0.55; }
+  50% { opacity: 0.5; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -593,7 +962,11 @@ h2 {
   .modal,
   .modal-backdrop,
   .qr-sheet,
-  .loader {
+  .loader,
+  .case-box {
     animation: none;
+  }
+  .cup-body {
+    transition: none;
   }
 }

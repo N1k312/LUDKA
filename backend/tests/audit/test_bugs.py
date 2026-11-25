@@ -269,9 +269,11 @@ def test_b14_callback_data_fits_telegram_limit():
     biggest = 9_223_372_036_854_775_807
     worst = [Nav(action=a, club_id=biggest, arg=biggest).pack()
              for a in ("sub_cancel_yes", "prize_kind", "prize_del", "prize_card", "prize_t", "prize_w",
-                       "prize_d", "limit_set", "sub_add")]
+                       "prize_d", "limit_set", "sub_add", "games", "game_on", "game_cd")]
     worst += [REDEEM_PREFIX + "GG-ZZZZZZ", f"staff:rm:{biggest}"]
-    worst += [f"pz:{kind}:{biggest}" for kind in "ctwdoy"] + ["pz:list", "pz:add", "pz:k:1"]
+    worst += [f"pz:{kind}:{biggest}" for kind in "ctwdoy"] + ["pz:list", "pz:add", "pz:k:1", "pz:g"]
+    worst += [f"pz:{p}:{g}" for p in ("l", "a", "on") for g in ("wheel", "cups", "case")]
+    worst += [f"pz:cd:{g}:604800" for g in ("wheel", "cups", "case")]
     too_long = [d for d in worst if len(d.encode()) > 64]
     assert not too_long, f"длиннее 64 байт: {too_long}"
 

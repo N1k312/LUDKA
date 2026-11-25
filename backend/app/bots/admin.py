@@ -59,6 +59,7 @@ STAFF_BUTTON = "👥 Сотрудники"
 TODAY_BUTTON = "📋 Сегодня"
 GUESTS_BUTTON = "🙋 Гости"
 PRIZES_BUTTON = "🎁 Призы и шансы"
+GAMES_BUTTON = "🎮 Игры"
 NEXT_CALLBACK = "admin:next"
 GUESTS_PAGE = "g:list:"
 GUEST_CARD = "g:card:"
@@ -108,7 +109,7 @@ def admin_keyboard(bot_id: int, role: Role) -> ReplyKeyboardMarkup:
              KeyboardButton(text=ENTER_BUTTON)],
             [KeyboardButton(text=TODAY_BUTTON), KeyboardButton(text=GUESTS_BUTTON)]]
     if can_edit_prizes(role):
-        rows.append([KeyboardButton(text=PRIZES_BUTTON)])
+        rows.append([KeyboardButton(text=GAMES_BUTTON), KeyboardButton(text=PRIZES_BUTTON)])
     if can_manage_admins(role):
         rows.append([_pick_user(ADD_ADMIN_BUTTON, PICK_ADMIN), KeyboardButton(text=STAFF_BUTTON)])
     if can_assign_superadmin(role):
@@ -185,7 +186,7 @@ async def admin_menu(message: Message, club: Club, role: Role) -> None:
         "Отсканируйте QR гостя или отправьте промокод сообщением (например, GG-7K3M9Q).",
     ]
     if can_edit_prizes(role):
-        lines.append("«🎁 Призы и шансы» — настроить секторы колеса.")
+        lines.append("«🎮 Игры» — включить колесо, стаканчики или кейс; «🎁 Призы и шансы» — призы каждой игры.")
     if can_manage_admins(role):
         lines.append("«➕ Добавить админа» — выбрать человека из контактов, «👥 Сотрудники» — список и удаление.")
     if can_assign_superadmin(role):

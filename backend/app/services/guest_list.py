@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Club, GameType, Guest, Play, PrizeCode
+from app.models import Club, Guest, Play, PrizeCode
 from app.services.codes import CodeStatus, code_status
 from app.services.guests import is_registered
 from app.services.wheel import next_spin_at, wheel_config
@@ -60,7 +60,7 @@ async def summary(db: AsyncSession, club: Club) -> dict[str, int]:
 def _rows_query(club: Club):
     plays = (
         select(Play.guest_id, func.count().label("spins"), func.max(Play.played_at).label("last_play"))
-        .where(Play.club_id == club.id, Play.game_type == GameType.WHEEL)
+        .where(Play.club_id == club.id)  # игры всех видов
         .group_by(Play.guest_id)
         .subquery()
     )
