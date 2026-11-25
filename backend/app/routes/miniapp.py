@@ -154,8 +154,14 @@ async def consent(ctx: Context, db: Db) -> dict:
     return {"registered": is_registered(guest), "has_consent": True}
 
 
+async def visible_options(db: AsyncSession, club: Club, game: GameType) -> list[PrizeOption]:
+    """Призы, которые можно выиграть. Приз с шансом 0 гостю не показываем: иначе он выглядел бы
+    «очень редким», хотя выпасть не может."""
+    return [o for o in await game_options(db, club.id, game) if o.weight > 0]
+
+
 async def prizes_of(db: AsyncSession, club: Club, game: GameType) -> list[dict]:
-    options = await game_options(db, club.id, game)
+    options = await visible_options(db, club, game)
     return [option_json(o, options) for o in options]
 
 
@@ -202,7 +208,7 @@ async def do_play(game: GameType, ctx: Context, db: Db, body: Annotated[PlayRequ
     if result.code is not None:
         await send_prize_code(ctx.bot, ctx.user.id, ctx.club, result.option, result.code)
 
-    options = await game_options(db, ctx.club.id, game)
+    options = await visible_options(db, ctx.club, game)
     prize = option_json(result.option, options)
     return {
         "prize": prize,

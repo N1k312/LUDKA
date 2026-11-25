@@ -4,6 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -48,15 +49,22 @@ class GameSettingError(Exception):
 
 
 async def game_configs(db: AsyncSession, club: Club) -> dict[GameType, GameConfig]:
-    """Настройки всех игр клуба; недостающие строки создаются (выключенными)."""
-    rows = {GameType(c.game_type): c for c in await db.scalars(
-        select(GameConfig).where(GameConfig.club_id == club.id))}
-    for game in GameType:
-        if game not in rows:
-            rows[game] = GameConfig(club_id=club.id, game_type=game, cooldown_seconds=WHEEL_COOLDOWN_SECONDS,
-                                    enabled=False)
-            db.add(rows[game])
-    await db.flush()
+    """Настройки всех игр клуба; недостающие строки создаются (выключенными).
+
+    INSERT ... ON CONFLICT DO NOTHING: два одновременных запроса (например, гость открыл
+    Mini App дважды) не падают на повторной вставке.
+    """
+    query = select(GameConfig).where(GameConfig.club_id == club.id)
+    rows = {GameType(c.game_type): c for c in await db.scalars(query)}
+    missing = [game for game in GameType if game not in rows]
+    if missing:
+        await db.execute(
+            pg_insert(GameConfig)
+            .values([{"club_id": club.id, "game_type": game, "cooldown_seconds": WHEEL_COOLDOWN_SECONDS,
+                      "enabled": False} for game in missing])
+            .on_conflict_do_nothing()
+        )
+        rows = {GameType(c.game_type): c for c in await db.scalars(query)}
     return {game: rows[game] for game in GameType}
 
 

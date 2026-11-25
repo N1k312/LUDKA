@@ -13,7 +13,8 @@ from app.models import Club, Guest, Play, PrizeCode, RedemptionAction, Redemptio
 
 @dataclass
 class DaySummary:
-    spins: int = 0
+    spins: int = 0  # игр всех видов
+    by_game: Counter = field(default_factory=Counter)  # game_type → сколько игр
     codes_issued: int = 0
     redeemed: int = 0
     redeemed_by: Counter = field(default_factory=Counter)  # telegram_id → сколько погасил
@@ -39,8 +40,14 @@ async def today(db: AsyncSession, club: Club, now: datetime | None = None) -> Da
         .group_by(PrizeCode.redeemed_by)
     )).all()
     by = Counter({telegram_id: n for telegram_id, n in rows})
+    games = Counter({game: n for game, n in (await db.execute(
+        select(Play.game_type, func.count())
+        .where(Play.club_id == club.id, Play.played_at >= since)
+        .group_by(Play.game_type)
+    )).all()})
     return DaySummary(
-        spins=await count(Play, Play.played_at >= since),
+        spins=sum(games.values()),
+        by_game=games,
         codes_issued=await count(PrizeCode, PrizeCode.created_at >= since),
         redeemed=sum(by.values()),
         redeemed_by=by,

@@ -16,7 +16,7 @@ import {
 import { CaseGame, type CaseHandle } from "./CaseGame";
 import { Confetti } from "./Confetti";
 import { Cups } from "./Cups";
-import { formatCountdown, formatDate } from "./format";
+import { formatCountdown, formatDate, formatWaitShort } from "./format";
 import { PrizeList, QrModal } from "./Prizes";
 import { GAME_META, RARITY_LABEL, rarityOf } from "./rarity";
 import { setSoundEnabled, soundEnabled, unlock as unlockSound } from "./sound";
@@ -184,7 +184,7 @@ function Lobby({ me, onOpen }: { me: Me; onOpen: (game: GameType) => void }) {
                 <span className="game-sub">{meta.sub}</span>
               </span>
               {wait > 0 ? (
-                <span className="pill pill-wait">⏳ {formatCountdown(wait)}</span>
+                <span className="pill pill-wait">⏳ {formatWaitShort(wait)}</span>
               ) : (
                 <span className="pill pill-ready">Играть</span>
               )}

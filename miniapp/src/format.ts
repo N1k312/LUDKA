@@ -32,6 +32,17 @@ export function formatCountdown(ms: number): string {
   return days > 0 ? `${days} д ${time}` : time;
 }
 
+/** Коротко для карточки игры: «3 д 4 ч», «4 ч 05 м», «05:06». */
+export function formatWaitShort(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const days = Math.floor(total / 86400);
+  const h = Math.floor((total % 86400) / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  if (days > 0) return `${days} д ${h} ч`;
+  if (h > 0) return `${h} ч ${pad(m)} м`;
+  return `${pad(m)}:${pad(total % 60)}`;
+}
+
 /** «сгорит через 3 дня», «сгорит через 5 ч», «сгорит меньше чем через час». */
 export function expiresIn(iso: string, now = Date.now()): string {
   const ms = new Date(iso).getTime() - now;

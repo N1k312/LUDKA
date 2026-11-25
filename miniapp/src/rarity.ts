@@ -22,7 +22,7 @@ export const rarityOf = (s: Pick<Sector, "rarity" | "is_empty">): Rarity => s.ra
 
 export const GAME_META: Record<GameType, { icon: string; sub: string; color: string; action: string }> = {
   wheel: { icon: "🎡", sub: "Крути и выигрывай", color: "#7c5cff", action: "🎡 Крутить колесо" },
-  cups: { icon: "🥤", sub: "Выбери 1 из 6 стаканчиков", color: "#ff7a45", action: "" },
+  cups: { icon: "🥤", sub: "Выбери 1 из 6", color: "#ff7a45", action: "" },
   case: { icon: "📦", sub: "Открой кейс с призами", color: "#22c55e", action: "📦 Открыть кейс" },
 };
 

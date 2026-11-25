@@ -335,7 +335,7 @@ async def ask_off(callback: CallbackQuery, club: Club, db: AsyncSession, state: 
     await edit_or_answer(
         callback,
         f"Выключить «{html.quote(prize_service.label(prize))}»?\n\n"
-        "Сектор исчезнет с колеса. Уже выданные промокоды останутся действительными.",
+        "Приз исчезнет из игры. Уже выданные промокоды останутся действительными.",
         markup,
     )
 

@@ -10,9 +10,10 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Club, Guest, Play, PrizeCode
+from app.services import clubs
 from app.services.codes import CodeStatus, code_status
 from app.services.guests import is_registered
-from app.services.wheel import next_spin_at, wheel_config
+from app.services.wheel import GAME_TITLES, next_spin_at
 
 PAGE_SIZE = 8
 SEARCH_LIMIT = 10
@@ -31,7 +32,8 @@ class GuestCard:
     row: GuestRow
     redeemed: int = 0
     expired: int = 0
-    next_spin: datetime | None = None
+    # Включённые игры: (название, когда можно сыграть; None — сейчас).
+    next_play: list[tuple[str, datetime | None]] = field(default_factory=list)
     recent_codes: list[tuple[PrizeCode, CodeStatus]] = field(default_factory=list)
 
 
@@ -125,11 +127,15 @@ async def card(db: AsyncSession, club: Club, guest_id: int) -> GuestCard | None:
         .order_by(PrizeCode.created_at.desc())
     ))
     statuses = [code_status(c, now) for c in codes]
-    config = await wheel_config(db, club.id)
+    next_play = []
+    if is_registered(row.guest):
+        for game, config in (await clubs.game_configs(db, club)).items():
+            if config.enabled:
+                next_play.append((GAME_TITLES[game], await next_spin_at(db, row.guest, config)))
     return GuestCard(
         row=row,
         redeemed=statuses.count(CodeStatus.REDEEMED),
         expired=statuses.count(CodeStatus.EXPIRED),
-        next_spin=await next_spin_at(db, row.guest, config) if config and is_registered(row.guest) else None,
+        next_play=next_play,
         recent_codes=list(zip(codes, statuses))[:5],
     )

@@ -36,6 +36,7 @@ from app.models import Club, ClubStaff, RedemptionResult, StaffRole
 from app.services import guest_list, stats
 from app.services.guests import is_registered
 from app.services.redemption import FAILED_WINDOW, Outcome, check_code, normalize_code, redeem_code
+from app.services.wheel import GAME_ICONS
 from app.services.staff import (
     ROLE_TITLES,
     Person,
@@ -168,7 +169,7 @@ async def notify_guest_redeemed(bot: Bot, outcome: Outcome, club: Club) -> None:
         await bot.send_message(
             outcome.guest.telegram_id,
             f"🎁 Приз получен: {html.bold(html.quote(outcome.prize.title))}\n\n"
-            f"Спасибо, что играете в {html.quote(club.name)}! Следующий спин — через неделю после прошлого.",
+            f"Спасибо, что играете в {html.quote(club.name)}! Новые игры ждут вас в боте — кнопка «🎮 Играть».",
         )
     except Exception:  # гость мог заблокировать бота — погашение от этого не отменяется
         pass
@@ -220,7 +221,7 @@ def guest_button(row: guest_list.GuestRow, page: int) -> InlineKeyboardButton:
     g = row.guest
     icon, _ = guest_list.status(g)
     name = g.first_name or (f"@{g.username}" if g.username else f"id {g.telegram_id}")
-    extra = f" · 🎡{row.spins}" + (f" · 🎁{row.active_codes}" if row.active_codes else "")
+    extra = f" · 🎮{row.spins}" + (f" · 🎁{row.active_codes}" if row.active_codes else "")
     return InlineKeyboardButton(text=f"{icon} {name}{extra}"[:60], callback_data=f"{GUEST_CARD}{g.id}:{page}")
 
 
@@ -232,7 +233,7 @@ async def guests_view(db: AsyncSession, club: Club, number: int) -> tuple[str, I
         f"🙋 <b>Гости</b> клуба {html.quote(club.name)}\n\n"
         f"Всего: {s['total']} · регистрация завершена: {s['registered']} · "
         f"с активными призами: {s['with_prizes']}\n\n"
-        "✅ — зарегистрирован, 📱 — нет номера, 📜 — правила не приняты. 🎡 — спинов, 🎁 — активных призов.\n"
+        "✅ — зарегистрирован, 📱 — нет номера, 📜 — правила не приняты. 🎮 — игр,🎁 — активных призов.\n"
         "Нажмите на гостя, чтобы открыть карточку."
     )
     if not rows:
@@ -258,11 +259,12 @@ def card_text(club: Club, c: guest_list.GuestCard) -> str:
     if g.username:
         name += f" (@{html.quote(g.username)})"
     if not is_registered(g):
-        next_spin = "после регистрации"
-    elif c.next_spin is None:
-        next_spin = "доступен сейчас"
+        next_play = "после регистрации"
+    elif not c.next_play:
+        next_play = "игры клуба выключены"
     else:
-        next_spin = local_datetime(c.next_spin, club)
+        next_play = "; ".join(f"{title} — {'сейчас' if at is None else local_datetime(at, club)}"
+                              for title, at in c.next_play)
     lines = [
         f"🙋 <b>{name}</b>",
         "",
@@ -272,8 +274,8 @@ def card_text(club: Club, c: guest_list.GuestCard) -> str:
         f"Впервые написал боту: {local_datetime(g.created_at, club)}",
         f"Правила приняты: {local_datetime(g.consent_at, club) if g.consent_at else '—'}",
         "",
-        f"Спинов: {c.row.spins}" + (f" · последний: {local_datetime(c.row.last_play, club)}" if c.row.last_play else ""),
-        f"Следующий спин: {next_spin}",
+        f"Игр: {c.row.spins}" + (f" · последняя: {local_datetime(c.row.last_play, club)}" if c.row.last_play else ""),
+        f"Можно играть: {next_play}",
         f"Призы: активных {c.row.active_codes} · получено {c.redeemed} · истекло {c.expired}",
     ]
     if c.recent_codes:
@@ -386,7 +388,9 @@ async def today_summary(message: Message, club: Club, db: AsyncSession) -> None:
     lines = [
         f"📋 <b>Сегодня</b> в {html.quote(club.name)}",
         "",
-        f"🎡 Спинов: {s.spins}",
+        f"🎮 Игр: {s.spins}" + (
+            " (" + " · ".join(f"{GAME_ICONS[g]} {n}" for g, n in sorted(s.by_game.items())) + ")"
+            if len(s.by_game) > 1 else ""),
         f"🎁 Выдано промокодов: {s.codes_issued}",
         f"✅ Погашено: {s.redeemed}",
         f"🙋 Новых гостей: {s.new_guests}",

@@ -113,7 +113,7 @@ def back(club_id: int) -> InlineKeyboardMarkup:
 
 MENU_TEXT = (
     "🛠 <b>Бот платформы</b>\n\n"
-    "Здесь подключаются и настраиваются клубы: бот клуба, призы колеса, суперадмин, "
+    "Здесь подключаются и настраиваются клубы: бот клуба, игры и призы, суперадмин, "
     "подписка, правила и QR для кассы. /cancel — отменить ввод."
 )
 MENU_KB = kb([btn("🏢 Клубы", "clubs"), btn("➕ Новый клуб", "new")])
@@ -138,23 +138,30 @@ def sub_line(sub: Subscription | None, club: Club) -> str:
 
 async def card(db: AsyncSession, club: Club) -> tuple[str, InlineKeyboardMarkup]:
     s = await clubs.club_summary(db, club)
-    prizes: list[PrizeOption] = s["prizes"]
-    total = sum(p.weight for p in prizes)
     owner = s["owner"]
     warnings = []
     if s["bot"] is None:
         warnings.append("⚠️ Бот не подключён")
-    if total == 0:
-        warnings.append("⚠️ Нет призов — колесо не крутится")
-    elif not any(p.is_empty for p in prizes):
-        warnings.append("ℹ️ Нет пустого сектора")
+    game_lines = []
+    for game, config in (await clubs.game_configs(db, club)).items():
+        prizes = await clubs.active_prizes(db, club, game)
+        total = sum(p.weight for p in prizes)
+        name = f"{GAME_ICONS[game]} {GAME_TITLES[game]}"
+        if not config.enabled:
+            game_lines.append(f"{name}: выключена, призов {len(prizes)}")
+            continue
+        game_lines.append(f"{name}: раз в {human_seconds(config.cooldown_seconds)}, "
+                          f"призов {len(prizes)} (сумма весов {total})")
+        if total == 0:
+            warnings.append(f"⚠️ Нет призов в игре «{GAME_TITLES[game]}» — она не работает")
+        elif not any(p.is_empty for p in prizes):
+            warnings.append(f"ℹ️ Нет пустого сектора в игре «{GAME_TITLES[game]}»")
     lines = [
         f"🏢 <b>{html.quote(club.name)}</b> · id {club.id}",
         "",
         f"🤖 Бот: {'@' + s['bot'].username if s['bot'] else 'не подключён'}",
         f"💳 Подписка: {sub_line(s['subscription'], club)}",
-        f"🎡 Колесо: раз в {human_seconds(s['config'].cooldown_seconds) if s['config'] else '—'}, "
-        f"призов {len(prizes)} (сумма весов {total})",
+        *game_lines,
         f"👑 Суперадмин: {html.quote(Person(owner.telegram_id, owner.first_name, owner.username).title()) if owner else 'не назначен'}"
         f" · админов: {len(s['admins'])}",
         f"📜 Правила: {'заданы' if club.rules_text else 'не заданы'}",
@@ -608,7 +615,7 @@ async def pay_amount(message: Message, db: AsyncSession, state: FSMContext) -> N
 @router.callback_query(Nav.filter(F.action == "sub_cancel"))
 async def sub_cancel(callback: CallbackQuery, callback_data: Nav) -> None:
     c = callback_data.club_id
-    await show(callback, "Отменить подписку? Колесо в клубе перестанет крутиться, "
+    await show(callback, "Отменить подписку? Игры в клубе остановятся, "
                "выданные промокоды по-прежнему можно будет погасить.",
                kb([btn("Да, отменить", "sub_cancel_yes", c), btn("Нет", "sub", c)]))
 

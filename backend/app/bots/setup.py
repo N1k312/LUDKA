@@ -64,12 +64,12 @@ async def configure_bot(bot: Bot, club_bot: ClubBot, club: Club) -> None:
     await bot.set_my_description(
         description=(
             f"Бот клуба «{club.name}».\n\n"
-            "Раз в неделю крутите колесо фортуны и выигрывайте бонусы клуба: "
-            "часы игры, скидки и напитки. Это бесплатно."
+            "Играйте в бесплатные мини-игры и выигрывайте бонусы клуба: "
+            "часы игры, скидки и напитки."
         )
     )
     await bot.set_my_short_description(
-        short_description=f"Колесо фортуны клуба «{club.name}»: бесплатные бонусы раз в неделю."
+        short_description=f"Игры клуба «{club.name}»: бесплатные бонусы за игру."
     )
 
 

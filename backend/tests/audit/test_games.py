@@ -89,6 +89,48 @@ async def test_guest_sees_rarity_but_not_weights(session, telegram, client):
     assert "weight" not in response.text and "chance" not in response.text
 
 
+async def test_prize_that_cannot_drop_is_hidden_from_guest(session, telegram, client):
+    """Баг аудита 25.11: приз с весом 0 показывался «очень редким», хотя выпасть не может."""
+    club, _ = await setup(session, telegram, client)
+    await clubs.add_prize(session, club, "Приманка", 0, "💎")
+
+    titles = [p["title"] for p in (await client.get("/api/games/wheel", headers=h())).json()["prizes"]]
+    sectors = [p["title"] for p in (await client.get("/api/wheel", headers=h())).json()["sectors"]]
+
+    assert "Приманка" not in titles and "Приманка" not in sectors
+    assert titles == ["1 час игры"]
+
+
+async def test_parallel_requests_create_missing_game_settings_once(engine):
+    """Баг аудита 25.11: два одновременных запроса к клубу без настроек игр — повторная вставка падала."""
+    import asyncio
+
+    from sqlalchemy import delete
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.models import Club
+
+    async with AsyncSession(engine) as db:
+        club_id = (await clubs.create_club(db, "Гонка настроек")).id
+        await db.execute(delete(GameConfig).where(GameConfig.club_id == club_id))
+        await db.commit()
+    try:
+        async def open_app():
+            async with AsyncSession(engine) as db:
+                configs = await clubs.game_configs(db, await db.get(Club, club_id))
+                await db.commit()
+                return len(configs)
+
+        assert await asyncio.gather(*(open_app() for _ in range(5))) == [3] * 5
+        async with AsyncSession(engine) as db:
+            rows = list(await db.scalars(select(GameConfig).where(GameConfig.club_id == club_id)))
+            assert len(rows) == 3 and not any(r.enabled for r in rows)
+    finally:
+        async with AsyncSession(engine) as db:
+            await db.execute(delete(Club).where(Club.id == club_id))
+            await db.commit()
+
+
 async def test_unknown_game_is_rejected(session, telegram, client):
     await setup(session, telegram, client)
 

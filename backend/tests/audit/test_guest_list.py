@@ -41,8 +41,8 @@ async def test_list_shows_summary_statuses_and_counts(session, telegram, client)
 
     assert "Всего: 3 · регистрация завершена: 1 · с активными призами: 1" in reply.text
     labels = [b.text for b in buttons(reply)]
-    assert labels[0] == "✅ Аня · 🎡1 · 🎁1"  # недавно игравший — первым
-    assert "📜 Боря · 🎡0" in labels and "📱 ANDREW · 🎡0" in labels
+    assert labels[0] == "✅ Аня · 🎮1 · 🎁1"  # недавно игравший — первым
+    assert "📜 Боря · 🎮0" in labels and "📱 ANDREW · 🎮0" in labels
     assert labels[-1] == "🔎 Найти гостя"
 
 
@@ -55,7 +55,7 @@ async def test_guest_card_details_and_masked_phone(session, telegram, client):
     [card] = bot.edited()
 
     for fragment in ("<b>Аня (@anya)</b>", "✅ регистрация завершена", "Телефон: …1285", f"<code>{GUEST}</code>",
-                     "Спинов: 1", "Призы: активных 1 · получено 0 · истекло 0", code):
+                     "Игр: 1", "Призы: активных 1 · получено 0 · истекло 0", code):
         assert fragment in card.text, fragment
     assert "77010001285" not in card.text and "7010001" not in card.text
     assert buttons(card)[0].callback_data == f"{GUESTS_PAGE}0"
@@ -72,8 +72,8 @@ async def test_card_after_redemption_and_next_spin(session, telegram, client):
     await bot.send(callback_update(f"{GUEST_CARD}{guest_id}:0", user_id=ADMIN))
     available = bot.edited()[-1].text
 
-    assert "получено 1" in blocked and "Следующий спин: доступен сейчас" not in blocked
-    assert "Следующий спин: доступен сейчас" in available
+    assert "получено 1" in blocked and "Можно играть: Колесо — сейчас" not in blocked
+    assert "Можно играть: Колесо — сейчас" in available
 
 
 async def test_pagination(session, telegram, client):

@@ -808,6 +808,11 @@ h2 {
   padding: 48px 8px 16px;
 }
 
+/* Экран ошибки без шапки и вкладок — отступы от краёв как у контента. */
+.screen > .notice {
+  padding: 64px 24px 16px;
+}
+
 .notice-emoji {
   font-size: 56px;
 }

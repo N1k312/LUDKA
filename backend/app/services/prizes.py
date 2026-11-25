@@ -92,12 +92,12 @@ def chance(prize: PrizeOption, prizes: list[PrizeOption]) -> str:
 def warnings(prizes: list[PrizeOption]) -> list[str]:
     playable = [p for p in prizes if p.weight > 0]
     if not playable:
-        return ["⛔ Нет ни одного сектора: колесо не работает."]
+        return ["⛔ Нет ни одного приза: игра не работает."]
     notes = []
     if all(p.is_empty for p in playable):
         notes.append("⛔ Нет призов с промокодом: гости ничего не выиграют.")
     elif not any(p.is_empty for p in playable):
-        notes.append("⚠️ Нет пустого сектора: каждый спин даёт приз.")
+        notes.append("⚠️ Нет пустого сектора: каждая игра даёт приз.")
     total = sum(p.weight for p in prizes)
     if total != 100:
         notes.append(f"ℹ️ Сумма шансов {total}, а не 100: проценты выше пересчитаны автоматически.")

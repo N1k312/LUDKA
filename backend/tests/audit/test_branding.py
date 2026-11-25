@@ -266,7 +266,7 @@ async def test_today_summary(session, telegram, client):
 
     [summary] = await bot.send(message_update(TODAY_BUTTON, user_id=ADMIN))
 
-    for fragment in ("Спинов: 1", "Выдано промокодов: 1", "Погашено: 1", "Аня (@anya) — 1",
+    for fragment in ("Игр: 1", "Выдано промокодов: 1", "Погашено: 1", "Аня (@anya) — 1",
                      "Проверок с неверным кодом: 1"):
         assert fragment in summary.text, fragment
     assert "Боря" not in summary.text
