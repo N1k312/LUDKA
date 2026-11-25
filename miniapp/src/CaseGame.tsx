@@ -4,6 +4,7 @@
 
 import { forwardRef, useImperativeHandle, useRef, useState } from "react";
 import type { Rarity, Sector } from "./api";
+import { CaseArt, PrizeIcon } from "./Icon";
 import { RARITY_LABEL, byRarity, rarityOf } from "./rarity";
 import { tick as soundTick } from "./sound";
 import { haptic, reducedMotion } from "./telegram";
@@ -76,14 +77,14 @@ export const CaseGame = forwardRef<CaseHandle, { prizes: Sector[] }>(function Ca
 
   return (
     <>
-      {!items && <div className="case-box" aria-hidden="true">📦</div>}
+      {!items && <div className="case-box" aria-hidden="true"><CaseArt size={120} /></div>}
       {items && (
         <div className="reel" ref={reelRef}>
           <div className="reel-marker" />
           <div className="reel-strip" ref={stripRef}>
             {items.map((p, i) => (
               <div key={i} className={`reel-item rarity-${rarityOf(p)} ${won && i === WIN ? "reel-win" : ""}`}>
-                <b>{p.is_empty ? "✖️" : p.emoji ?? "🎁"}</b>
+                <PrizeIcon empty={p.is_empty} size={30} />
                 {p.is_empty ? "Пусто" : p.title}
               </div>
             ))}
@@ -94,7 +95,7 @@ export const CaseGame = forwardRef<CaseHandle, { prizes: Sector[] }>(function Ca
       <div className="chips">
         {byRarity(prizes).map((p) => (
           <span key={p.id} className={`chip rarity-${rarityOf(p)}`} title={RARITY_LABEL[rarityOf(p)]}>
-            {p.is_empty ? "✖️" : p.emoji ?? "🎁"} {p.is_empty ? "Пусто" : p.title}
+            <PrizeIcon empty={p.is_empty} size={14} /> {p.is_empty ? "Пусто" : p.title}
           </span>
         ))}
       </div>

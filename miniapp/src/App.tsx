@@ -18,6 +18,7 @@ import { Confetti } from "./Confetti";
 import { Cups } from "./Cups";
 import { formatCountdown, formatDate, formatWaitShort } from "./format";
 import { PrizeList, QrModal } from "./Prizes";
+import { GameArt, Icon, type IconName } from "./Icon";
 import { GAME_META, RARITY_LABEL, rarityOf } from "./rarity";
 import { setSoundEnabled, soundEnabled, unlock as unlockSound } from "./sound";
 import { goFullscreen, haptic, inTelegram, paintTelegram, tg } from "./telegram";
@@ -78,7 +79,7 @@ export function App() {
     const offline = error.code === "network";
     return (
       <Screen>
-        <Notice emoji={offline ? "📡" : error.status === 401 ? "🔒" : "⚠️"} title={offline ? "Нет связи" : error.message}>
+        <Notice icon={offline ? "offline" : error.status === 401 ? "lock" : "alert"} title={offline ? "Нет связи" : error.message}>
           {offline && <p>Проверьте интернет и попробуйте ещё раз.</p>}
           {error.status !== 401 && <button className="button" onClick={load}>Повторить</button>}
         </Notice>
@@ -111,7 +112,7 @@ export function App() {
             setSound(!sound);
           }}
         >
-          {sound ? "🔊" : "🔇"}
+          <Icon name={sound ? "volume" : "mute"} size={19} />
         </button>
       </header>
 
@@ -135,9 +136,9 @@ export function App() {
       </main>
 
       <nav className="tabs">
-        <TabButton active={tab === "games"} onClick={() => switchTab("games")} icon="🎮" label="Игры" />
-        <TabButton active={tab === "prizes"} onClick={() => switchTab("prizes")} icon="🎁" label="Мои призы" />
-        <TabButton active={tab === "rules"} onClick={() => switchTab("rules")} icon="📜" label="Правила" />
+        <TabButton active={tab === "games"} onClick={() => switchTab("games")} icon="gamepad" label="Игры" />
+        <TabButton active={tab === "prizes"} onClick={() => switchTab("prizes")} icon="gift" label="Мои призы" />
+        <TabButton active={tab === "rules"} onClick={() => switchTab("rules")} icon="rules" label="Правила" />
       </nav>
     </Screen>
   );
@@ -151,12 +152,12 @@ function Lobby({ me, onOpen }: { me: Me; onOpen: (game: GameType) => void }) {
 
   if (!me.available) {
     return (
-      <Notice emoji="⏸️" title="Акция временно недоступна">
+      <Notice icon="pause" title="Акция временно недоступна">
         <p>Уже выигранные призы можно получить по промокоду у администратора.</p>
       </Notice>
     );
   }
-  if (games.length === 0) return <Notice emoji="🛠️" title="Игры сейчас выключены" />;
+  if (games.length === 0) return <Notice icon="tool" title="Игры сейчас выключены" />;
 
   return (
     <>
@@ -178,13 +179,13 @@ function Lobby({ me, onOpen }: { me: Me; onOpen: (game: GameType) => void }) {
                 onOpen(g.type);
               }}
             >
-              <span className="game-art" aria-hidden="true">{meta.icon}</span>
+              <span className="game-art" aria-hidden="true"><GameArt type={g.type} size={38} /></span>
               <span className="game-main">
                 <span className="game-title">{g.title}</span>
                 <span className="game-sub">{meta.sub}</span>
               </span>
               {wait > 0 ? (
-                <span className="pill pill-wait">⏳ {formatWaitShort(wait)}</span>
+                <span className="pill pill-wait"><Icon name="clock" size={13} /> {formatWaitShort(wait)}</span>
               ) : (
                 <span className="pill pill-ready">Играть</span>
               )}
@@ -303,14 +304,14 @@ function GameScreen({
 
   return (
     <div className="game-screen">
-      {!inTelegram && <button className="back-link" onClick={onBack}>← Все игры</button>}
-      <h2>{meta.icon} {game.title}</h2>
+      {!inTelegram && <button className="back-link" onClick={onBack}><Icon name="back" size={16} /> Все игры</button>}
+      <h2>{game.title}</h2>
       {game.type === "cups" && <p className="muted game-hint">Под одним из стаканчиков может быть приз. Выберите один.</p>}
 
       {!prizes ? (
         <div className="sk sk-wheel" />
       ) : prizes.length === 0 ? (
-        <Notice emoji="🛠️" title="Призы ещё не настроены" />
+        <Notice icon="tool" title="Призы ещё не настроены" />
       ) : (
         <>
           {game.type === "wheel" && (
@@ -381,7 +382,9 @@ function ResultModal({
     <div className="modal-backdrop" onClick={onClose}>
       {code && <Confetti colors={level === "legendary" ? ["#ff3d5a", "#ffd166", "#ffffff"] : branding.wheel} />}
       <div className={`modal rarity-${level}`} onClick={(e) => e.stopPropagation()}>
-        <div className="modal-emoji">{prize.is_empty ? "😔" : prize.emoji ?? "🎉"}</div>
+        <div className="modal-icon">
+          <Icon name={prize.is_empty ? "retry" : level === "legendary" || level === "rare" ? "trophy" : "gift"} size={44} />
+        </div>
         {code ? (
           <>
             <span className="rarity-tag">{RARITY_LABEL[level]}</span>
@@ -392,7 +395,7 @@ function ResultModal({
             <p className="muted">
               Действует до {formatDate(code.expires_at, timeZone)}. Промокод также отправлен в чат с ботом.
             </p>
-            <button className="button" onClick={() => setShowQr(true)}>📱 Показать админу</button>
+            <button className="button" onClick={() => setShowQr(true)}><Icon name="qr" size={18} /> Показать админу</button>
             <button className="button button-secondary" onClick={onShowPrizes}>Мои призы</button>
           </>
         ) : (
@@ -461,7 +464,7 @@ function Registration({ me, onChanged, onShowRules }: { me: Me; onChanged: () =>
 
       <section className={`step ${consent ? "step-done" : ""}`}>
         <div className="step-head">
-          <span className="step-num">{consent ? "✓" : "1"}</span>
+          <span className="step-num">{consent ? <Icon name="check" size={15} /> : "1"}</span>
           <span className="step-title">Правила акции</span>
         </div>
         {!consent && (
@@ -472,7 +475,7 @@ function Registration({ me, onChanged, onShowRules }: { me: Me; onChanged: () =>
             </p>
             <div className="step-actions">
               <button className="button" disabled={busy !== null} onClick={accept}>
-                {busy === "consent" ? "Сохраняем…" : "✅ Принимаю правила"}
+                {busy === "consent" ? "Сохраняем…" : "Принимаю правила"}
               </button>
               <button className="button button-secondary" onClick={onShowRules}>Читать правила</button>
             </div>
@@ -482,7 +485,7 @@ function Registration({ me, onChanged, onShowRules }: { me: Me; onChanged: () =>
 
       <section className={`step ${phone ? "step-done" : ""}`}>
         <div className="step-head">
-          <span className="step-num">{phone ? "✓" : "2"}</span>
+          <span className="step-num">{phone ? <Icon name="check" size={15} /> : "2"}</span>
           <span className="step-title">Номер телефона</span>
         </div>
         {!phone && (
@@ -490,7 +493,7 @@ function Registration({ me, onChanged, onShowRules }: { me: Me; onChanged: () =>
             <p className="muted">По номеру администратор найдёт ваш приз. Номер видит только клуб.</p>
             {canShareContact() ? (
               <button className="button" disabled={busy !== null} onClick={sharePhone}>
-                {busy === "phone" ? "Ждём номер…" : "📱 Поделиться номером"}
+                {busy === "phone" ? "Ждём номер…" : <><Icon name="phone" size={18} /> Поделиться номером</>}
               </button>
             ) : (
               <>
@@ -517,11 +520,11 @@ function PrizesTab({ timeZone }: { timeZone: string }) {
     api.prizes().then(setPrizes, (e) => setError(e instanceof ApiError ? e.message : "Ошибка загрузки"));
   }, []);
 
-  if (error) return <Notice emoji="⚠️" title={error} />;
+  if (error) return <Notice icon="alert" title={error} />;
   if (!prizes) return <ListSkeleton />;
   if (prizes.length === 0) {
     return (
-      <Notice emoji="🎁" title="Призов пока нет">
+      <Notice icon="gift" title="Призов пока нет">
         <p>Играйте — выигранные промокоды появятся здесь.</p>
       </Notice>
     );
@@ -571,20 +574,20 @@ function ListSkeleton() {
   );
 }
 
-function Notice({ emoji, title, children }: { emoji: string; title: string; children?: React.ReactNode }) {
+function Notice({ icon, title, children }: { icon: IconName; title: string; children?: React.ReactNode }) {
   return (
     <div className="notice">
-      <div className="notice-emoji">{emoji}</div>
+      <div className="notice-icon"><Icon name={icon} size={34} /></div>
       <h2>{title}</h2>
       {children}
     </div>
   );
 }
 
-function TabButton({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: string; label: string }) {
+function TabButton({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: IconName; label: string }) {
   return (
     <button className={`tab ${active ? "tab-active" : ""}`} onClick={onClick}>
-      <span className="tab-icon">{icon}</span>
+      <Icon name={icon} size={21} className="tab-icon" />
       <span>{label}</span>
     </button>
   );

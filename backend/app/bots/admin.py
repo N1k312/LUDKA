@@ -181,8 +181,8 @@ async def notify_guest_redeemed(bot: Bot, outcome: Outcome, club: Club) -> None:
     try:
         await bot.send_message(
             outcome.guest.telegram_id,
-            f"🎁 Приз получен: {html.bold(html.quote(outcome.prize.title))}\n\n"
-            f"Спасибо, что играете в {html.quote(club.name)}! Новые игры ждут вас в боте — кнопка «🎮 Играть».",
+            f"Приз получен: {html.bold(html.quote(outcome.prize.title))}\n\n"  # гостю — без эмодзи
+            f"Спасибо, что играете в {html.quote(club.name)}! Новые игры ждут вас в боте — кнопка «Играть».",
         )
     except Exception:  # гость мог заблокировать бота — погашение от этого не отменяется
         pass

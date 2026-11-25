@@ -20,10 +20,11 @@ export const RARITY_FILL: Record<Rarity, [string, string]> = {
 
 export const rarityOf = (s: Pick<Sector, "rarity" | "is_empty">): Rarity => s.rarity ?? (s.is_empty ? "empty" : "common");
 
-export const GAME_META: Record<GameType, { icon: string; sub: string; color: string; action: string }> = {
-  wheel: { icon: "🎡", sub: "Крути и выигрывай", color: "#7c5cff", action: "🎡 Крутить колесо" },
-  cups: { icon: "🥤", sub: "Выбери 1 из 6", color: "#ff7a45", action: "" },
-  case: { icon: "📦", sub: "Открой кейс с призами", color: "#22c55e", action: "📦 Открыть кейс" },
+// Картинки игр — в Icon.tsx (GameArt), без эмодзи.
+export const GAME_META: Record<GameType, { sub: string; color: string; action: string }> = {
+  wheel: { sub: "Крути и выигрывай", color: "#7c5cff", action: "Крутить колесо" },
+  cups: { sub: "Выбери 1 из 6", color: "#ff7a45", action: "" },
+  case: { sub: "Открой кейс с призами", color: "#22c55e", action: "Открыть кейс" },
 };
 
 /** Призы по редкости: от редких к обычным, пустые в конце. */

@@ -4,6 +4,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import type { Sector } from "./api";
+import { PrizeIcon } from "./Icon";
 import { RARITY_FILL, rarityOf } from "./rarity";
 import { tick as soundTick } from "./sound";
 import { haptic, reducedMotion } from "./telegram";
@@ -144,8 +145,10 @@ export const Wheel = forwardRef<WheelHandle, Props>(function Wheel({ sectors, co
             <g key={s.id}>
               <path d={sectorPath(center, step)} fill={fill} stroke="#0f111a" strokeWidth="1.6" />
               <g transform={`rotate(${center})`}>
-                <text y={-78} className="wheel-emoji">{s.emoji ?? "🎁"}</text>
-                <text y={-58} className="wheel-label">
+                <g transform="translate(-6.5 -89)" style={{ color: "#ffffff" }} opacity={0.9}>
+                  <PrizeIcon empty={s.is_empty} size={13} />
+                </g>
+                <text y={-62} className="wheel-label">
                   {lines.map((l, k) => (
                     <tspan key={k} x={0} dy={k === 0 ? 0 : 8.5}>{l}</tspan>
                   ))}

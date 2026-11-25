@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import type { Prize, PrizeStatus } from "./api";
 import { expiresIn, formatDate, formatDateTime } from "./format";
+import { PrizeIcon } from "./Icon";
 import { haptic } from "./telegram";
 
 const STATUS: Record<PrizeStatus, string> = {
@@ -39,7 +40,7 @@ export function PrizeList({ prizes, timeZone }: { prizes: Prize[]; timeZone: str
                 }}
                 disabled={p.status !== "active"}
               >
-                <span className="prize-emoji">{p.emoji ?? "🎁"}</span>
+                <span className="prize-emoji"><PrizeIcon empty={false} size={24} /></span>
                 <span className="prize-main">
                   <span className="prize-title">{p.title}</span>
                   <span className="prize-code">{p.code}</span>
@@ -67,7 +68,7 @@ export function QrModal({ prize, onClose }: { prize: Pick<Prize, "code" | "title
   return (
     <div className="modal-backdrop qr-backdrop" onClick={onClose}>
       <div className="qr-sheet" onClick={(e) => e.stopPropagation()}>
-        <div className="qr-title">{prize.emoji ?? "🎁"} {prize.title}</div>
+        <div className="qr-title">{prize.title}</div>
         <QrImage value={prize.code} size={280} />
         <div className="code qr-code">{prize.code}</div>
         <p className="muted">Покажите экран администратору. Если сканер не видит код — прибавьте яркость.</p>

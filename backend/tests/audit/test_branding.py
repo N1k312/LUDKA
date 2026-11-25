@@ -202,7 +202,7 @@ async def test_welcome_buttons_and_rules_callback(session, telegram, client):
     [rules] = await bot.send(callback_update(RULES_CALLBACK, user_id=GUEST))
 
     labels = [b.text for row in welcome.reply_markup.inline_keyboard for b in row]
-    assert labels == ["🎮 Играть", "🎁 Мои призы", "📜 Правила"]
+    assert labels == ["Играть", "Мои призы", "Правила"]
     assert "Ждём на турнире в пятницу!" in welcome.text
     assert "Раз в неделю" in rules.text
 

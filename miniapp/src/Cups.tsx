@@ -4,6 +4,7 @@
 
 import { useState } from "react";
 import type { Sector, SpinResult } from "./api";
+import { CupArt, PrizeIcon } from "./Icon";
 import { rarityOf } from "./rarity";
 import { haptic, reducedMotion } from "./telegram";
 
@@ -58,12 +59,12 @@ export function Cups({ disabled, onPick, onRevealed }: Props) {
             >
               {item && (
                 <span className={`cup-prize rarity-${rarityOf(item)}`}>
-                  <b>{item.is_empty ? "✖️" : item.emoji ?? "🎁"}</b>
+                  <PrizeIcon empty={item.is_empty} size={22} />
                   {item.is_empty ? "Пусто" : item.title}
                 </span>
               )}
               <span className="cup-body">
-                <CupArt />
+                <CupArt id={`cup-shade-${i}`} />
               </span>
             </button>
           );
@@ -71,26 +72,5 @@ export function Cups({ disabled, onPick, onRevealed }: Props) {
       </div>
       <div className="cups-floor" />
     </>
-  );
-}
-
-function CupArt() {
-  return (
-    <svg viewBox="0 0 80 100" aria-hidden="true">
-      <path d="M10 10 H70 L61 94 Q40 100 19 94 Z" style={{ fill: "var(--accent)" }} />
-      <path d="M10 10 H70 L61 94 Q40 100 19 94 Z" fill="url(#cup-shade)" />
-      <path d="M16 14 H26 L22 88 H19 Z" fill="#ffffff" opacity="0.22" />
-      <path d="M13 34 H67 L66 42 H14 Z" fill="#ffffff" opacity="0.85" />
-      <path d="M14.5 50 H65.5 L64.7 56 H15.3 Z" fill="#ffffff" opacity="0.5" />
-      <rect x="5" y="3" width="70" height="11" rx="5.5" style={{ fill: "var(--accent)" }} />
-      <rect x="5" y="3" width="70" height="11" rx="5.5" fill="#ffffff" opacity="0.28" />
-      <defs>
-        <linearGradient id="cup-shade" x1="0" x2="1">
-          <stop offset="0" stopColor="#000" stopOpacity="0" />
-          <stop offset="0.65" stopColor="#000" stopOpacity="0.08" />
-          <stop offset="1" stopColor="#000" stopOpacity="0.38" />
-        </linearGradient>
-      </defs>
-    </svg>
   );
 }

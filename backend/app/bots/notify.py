@@ -39,9 +39,9 @@ def local_datetime(value: datetime, club: Club) -> str:
 
 
 def prize_message(club: Club, option: PrizeOption, code: PrizeCode) -> str:
-    prize = f"{option.emoji} {option.title}" if option.emoji else option.title
+    """Без эмодзи: сообщение гостю должно выглядеть как от клуба, а не как шаблон."""
     return (
-        f"🎉 Вы выиграли: {html.bold(html.quote(prize))}\n\n"
+        f"Вы выиграли: {html.bold(html.quote(option.title))}\n\n"
         f"Промокод: {html.code(code.code)}\n"
         f"Действует до {local_date(code.expires_at, club)} включительно.\n\n"
         f"Покажите промокод администратору клуба {html.quote(club.name)}, чтобы получить приз."
